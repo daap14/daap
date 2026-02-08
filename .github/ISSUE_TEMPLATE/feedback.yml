@@ -1,0 +1,64 @@
+name: Feedback
+description: Submit feedback on an iteration or feature
+labels: ["type:feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share your feedback on the product. This will be processed via `/incorporate-feedback`.
+
+  - type: dropdown
+    id: iteration
+    attributes:
+      label: Iteration
+      description: Which iteration is this feedback for?
+      options:
+        - v0.1
+        - v0.2
+        - v0.3
+        - General
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Bug
+        - UX / Usability
+        - Feature Request
+        - Performance
+        - Security
+    validations:
+      required: true
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback
+      description: Describe your feedback in detail
+      placeholder: What did you experience? What would be better?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: How much does this affect your experience?
+      options:
+        - Blocks me entirely
+        - Significant inconvenience
+        - Minor annoyance
+        - Nice to have
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Solution
+      description: If you have a suggestion for how to address this
+    validations:
+      required: false

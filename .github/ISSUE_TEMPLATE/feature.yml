@@ -1,0 +1,60 @@
+name: Feature
+description: Propose a new feature or enhancement
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please fill out the details below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Clear description of the feature
+      placeholder: What should this feature do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How do we know this feature is complete?
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: iteration
+    attributes:
+      label: Target Iteration
+      description: Which iteration should this be part of?
+      options:
+        - v0.1
+        - v0.2
+        - v0.3
+        - Backlog
+    validations:
+      required: false
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Estimated Complexity
+      options:
+        - S (< 1 hour)
+        - M (1-3 hours)
+        - L (3-8 hours)
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any additional context, screenshots, or references
+    validations:
+      required: false

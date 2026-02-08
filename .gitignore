@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+target/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+.docker/
+
+# Test & coverage
+coverage/
+.coverage
+htmlcov/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
+*.tmp
