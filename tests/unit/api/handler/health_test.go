@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,6 +24,15 @@ func (m *mockHealthChecker) CheckConnectivity(_ context.Context) k8s.Connectivit
 	return m.status
 }
 
+// mockDBPinger implements handler.DBPinger for testing.
+type mockDBPinger struct {
+	err error
+}
+
+func (m *mockDBPinger) Ping(_ context.Context) error {
+	return m.err
+}
+
 func TestHealthHandler_Healthy(t *testing.T) {
 	// Arrange
 	checker := &mockHealthChecker{
@@ -31,7 +41,8 @@ func TestHealthHandler_Healthy(t *testing.T) {
 			Version:   "v1.31.0",
 		},
 	}
-	h := handler.NewHealthHandler(checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	h := handler.NewHealthHandler(checker, pinger, "0.1.0")
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 
@@ -54,18 +65,22 @@ func TestHealthHandler_Healthy(t *testing.T) {
 	assert.Equal(t, true, k8sStatus["connected"])
 	assert.Equal(t, "v1.31.0", k8sStatus["version"])
 
+	dbStatus := data["database"].(map[string]interface{})
+	assert.Equal(t, true, dbStatus["connected"])
+
 	assert.Nil(t, env["error"])
 	assert.NotNil(t, env["meta"])
 }
 
-func TestHealthHandler_Degraded(t *testing.T) {
+func TestHealthHandler_DegradedK8s(t *testing.T) {
 	// Arrange
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{
 			Connected: false,
 		},
 	}
-	h := handler.NewHealthHandler(checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	h := handler.NewHealthHandler(checker, pinger, "0.1.0")
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 
@@ -88,11 +103,71 @@ func TestHealthHandler_Degraded(t *testing.T) {
 	assert.Nil(t, k8sStatus["version"])
 }
 
+func TestHealthHandler_DegradedDB(t *testing.T) {
+	// Arrange
+	checker := &mockHealthChecker{
+		status: k8s.ConnectivityStatus{
+			Connected: true,
+			Version:   "v1.31.0",
+		},
+	}
+	pinger := &mockDBPinger{err: errors.New("connection refused")}
+	h := handler.NewHealthHandler(checker, pinger, "0.1.0")
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.ServeHTTP(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var env map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &env)
+	require.NoError(t, err)
+
+	data := env["data"].(map[string]interface{})
+	assert.Equal(t, "degraded", data["status"])
+
+	dbStatus := data["database"].(map[string]interface{})
+	assert.Equal(t, false, dbStatus["connected"])
+}
+
+func TestHealthHandler_DegradedNilPinger(t *testing.T) {
+	// Arrange: nil DBPinger should produce degraded status
+	checker := &mockHealthChecker{
+		status: k8s.ConnectivityStatus{
+			Connected: true,
+			Version:   "v1.31.0",
+		},
+	}
+	h := handler.NewHealthHandler(checker, nil, "0.1.0")
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.ServeHTTP(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var env map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &env)
+	require.NoError(t, err)
+
+	data := env["data"].(map[string]interface{})
+	assert.Equal(t, "degraded", data["status"])
+
+	dbStatus := data["database"].(map[string]interface{})
+	assert.Equal(t, false, dbStatus["connected"])
+}
+
 func TestHealthHandler_VersionReflectsConfig(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.30.0"},
 	}
-	h := handler.NewHealthHandler(checker, "2.5.0-beta")
+	pinger := &mockDBPinger{err: nil}
+	h := handler.NewHealthHandler(checker, pinger, "2.5.0-beta")
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 
@@ -111,7 +186,8 @@ func TestHealthHandler_ResponseEnvelopeStructure(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.31.0"},
 	}
-	h := handler.NewHealthHandler(checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	h := handler.NewHealthHandler(checker, pinger, "0.1.0")
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 
@@ -131,16 +207,21 @@ func TestHealthHandler_ResponseEnvelopeStructure(t *testing.T) {
 	assert.Contains(t, meta, "requestId")
 	assert.Contains(t, meta, "timestamp")
 
-	// Data has status, version, kubernetes
+	// Data has status, version, kubernetes, database
 	data := env["data"].(map[string]interface{})
 	assert.Contains(t, data, "status")
 	assert.Contains(t, data, "version")
 	assert.Contains(t, data, "kubernetes")
+	assert.Contains(t, data, "database")
 
 	// Kubernetes has connected and version
 	k8sData := data["kubernetes"].(map[string]interface{})
 	assert.Contains(t, k8sData, "connected")
 	assert.Contains(t, k8sData, "version")
+
+	// Database has connected
+	dbData := data["database"].(map[string]interface{})
+	assert.Contains(t, dbData, "connected")
 }
 
 func TestHealthHandler_DevVersion(t *testing.T) {
@@ -148,7 +229,8 @@ func TestHealthHandler_DevVersion(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: false},
 	}
-	h := handler.NewHealthHandler(checker, "dev")
+	pinger := &mockDBPinger{err: nil}
+	h := handler.NewHealthHandler(checker, pinger, "dev")
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 

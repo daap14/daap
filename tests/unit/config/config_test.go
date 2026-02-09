@@ -10,21 +10,25 @@ import (
 	"github.com/daap14/daap/internal/config"
 )
 
+const testDatabaseURL = "postgres://user:pass@localhost:5432/daap_test?sslmode=disable"
+
 func clearEnvVars(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"PORT", "LOG_LEVEL", "KUBECONFIG_PATH", "NAMESPACE", "VERSION"} {
+	for _, key := range []string{"PORT", "LOG_LEVEL", "DATABASE_URL", "KUBECONFIG_PATH", "NAMESPACE", "VERSION"} {
 		os.Unsetenv(key)
 	}
 }
 
 func TestLoad_Defaults(t *testing.T) {
 	clearEnvVars(t)
+	t.Setenv("DATABASE_URL", testDatabaseURL)
 
 	cfg, err := config.Load()
 
 	require.NoError(t, err)
 	assert.Equal(t, 8080, cfg.Port)
 	assert.Equal(t, "info", cfg.LogLevel)
+	assert.Equal(t, testDatabaseURL, cfg.DatabaseURL)
 	assert.Equal(t, "", cfg.KubeconfigPath)
 	assert.Equal(t, "default", cfg.Namespace)
 	assert.Equal(t, "dev", cfg.Version)
@@ -93,6 +97,7 @@ func TestLoad_EnvVarOverrides(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnvVars(t)
+			t.Setenv("DATABASE_URL", testDatabaseURL)
 			for k, v := range tt.envVars {
 				t.Setenv(k, v)
 			}
@@ -105,8 +110,18 @@ func TestLoad_EnvVarOverrides(t *testing.T) {
 	}
 }
 
+func TestLoad_MissingDatabaseURL(t *testing.T) {
+	clearEnvVars(t)
+
+	cfg, err := config.Load()
+
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+}
+
 func TestLoad_InvalidPort(t *testing.T) {
 	clearEnvVars(t)
+	t.Setenv("DATABASE_URL", testDatabaseURL)
 	t.Setenv("PORT", "not-a-number")
 
 	cfg, err := config.Load()

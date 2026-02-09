@@ -48,6 +48,11 @@ All API responses use a consistent envelope:
 - Sanitize string inputs (trim whitespace, escape HTML)
 - Enforce max lengths on string fields
 
+## Infrastructure Isolation
+- Never expose infrastructure parameters (instances, storage size, replication topology) in the API — these are platform-level defaults
+- Consumers should not decide cluster sizing, storage layout, or internal database names
+- Connection credentials are referenced via Kubernetes Secret names, not returned directly
+
 ## Documentation
 - Add OpenAPI-compatible comments on route handlers
 - Document request/response schemas

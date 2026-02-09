@@ -4,7 +4,7 @@
 set -euo pipefail
 
 CLUSTER_NAME="${K3D_CLUSTER:-daap-local}"
-CNPG_VERSION="${CNPG_VERSION:-1.25.0}"
+CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
 CNPG_RELEASE_BRANCH="$(echo "$CNPG_VERSION" | cut -d. -f1-2)"
 
 echo "==> Setting up local development cluster..."
@@ -26,7 +26,7 @@ else
   kubectl apply --server-side -f \
     "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-${CNPG_RELEASE_BRANCH}/releases/cnpg-${CNPG_VERSION}.yaml"
   echo "Waiting for CNPG operator to be ready..."
-  kubectl wait --for=condition=Available deployment/cnpg-controller-manager \
+  kubectl rollout status deployment/cnpg-controller-manager \
     -n cnpg-system --timeout=120s
   echo "CNPG operator installed and ready."
 fi

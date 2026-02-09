@@ -1,0 +1,1 @@
+ALTER TABLE databases ADD COLUMN dbname VARCHAR(255);

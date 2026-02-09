@@ -1,7 +1,7 @@
 ---
 globs:
-  - "src/models/**"
-  - "src/migrations/**"
+  - "internal/database/**"
+  - "migrations/**"
 ---
 
 # Database Conventions
@@ -32,6 +32,12 @@ globs:
 - Columns: singular snake_case (`email`, `created_at`)
 - Foreign keys: `<singular_table>_id` (`user_id`, `order_id`)
 - Indexes: `idx_<table>_<columns>` (`idx_users_email`)
+
+## Timestamps
+- Use the database's `NOW()` function for `updated_at` in UPDATE queries, not Go's `time.Now().UTC()`
+- This ensures clock consistency between application and database servers
+- `created_at` should use `DEFAULT NOW()` in the schema, not application-side timestamps
+- Only use application-side timestamps when the database function is not available (e.g., soft-delete with explicit `deleted_at`)
 
 ## Performance
 - Set connection pool limits appropriate for the environment

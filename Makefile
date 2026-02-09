@@ -11,9 +11,12 @@ GO                   := go
 GOFLAGS              := -v
 BINARY               := bin/$(APP_NAME)
 K3D_CLUSTER          := daap-local
-CNPG_VERSION         := 1.25.0
+CNPG_VERSION         := 1.25.1
 GOLANGCI_LINT_VERSION := v2.8.0
+AIR                  := $(shell go env GOPATH)/bin/air
 GOLANGCI_LINT        := $(shell go env GOPATH)/bin/golangci-lint
+DATABASE_URL         ?= postgres://daap:daap@localhost:5432/daap?sslmode=disable
+MIGRATIONS_DIR       := migrations
 
 # ——————————————————————————————————————————————
 # Help
@@ -39,6 +42,12 @@ setup: ## Install project dependencies and dev tools
 	else \
 		echo "k3d already installed: $$(k3d version | head -1)"; \
 	fi
+	@if ! command -v migrate >/dev/null 2>&1; then \
+		echo "Installing golang-migrate..."; \
+		$(GO) install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest; \
+	else \
+		echo "golang-migrate already installed."; \
+	fi
 	@echo "Setup complete."
 
 # ——————————————————————————————————————————————
@@ -46,7 +55,7 @@ setup: ## Install project dependencies and dev tools
 # ——————————————————————————————————————————————
 .PHONY: dev
 dev: ## Start dev server with hot reload (air)
-	air
+	$(AIR)
 
 .PHONY: build
 build: ## Build production binary
@@ -87,6 +96,34 @@ fmt: ## Format Go source files
 	goimports -w .
 
 # ——————————————————————————————————————————————
+# Database Migrations
+# ——————————————————————————————————————————————
+.PHONY: migrate
+migrate: ## Run all pending database migrations
+	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" up
+
+.PHONY: migrate-rollback
+migrate-rollback: ## Rollback the last database migration
+	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" down 1
+
+.PHONY: migrate-status
+migrate-status: ## Show current migration version
+	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" version
+
+.PHONY: migrate-create
+migrate-create: ## Create a new migration pair (usage: make migrate-create NAME=description)
+	@if [ -z "$(NAME)" ]; then echo "Usage: make migrate-create NAME=description"; exit 1; fi
+	@NEXT=$$(printf "%03d" $$(( $$(ls -1 $(MIGRATIONS_DIR)/*.up.sql 2>/dev/null | wc -l) + 1 ))); \
+	touch $(MIGRATIONS_DIR)/$${NEXT}_$(NAME).up.sql; \
+	touch $(MIGRATIONS_DIR)/$${NEXT}_$(NAME).down.sql; \
+	echo "Created $(MIGRATIONS_DIR)/$${NEXT}_$(NAME).up.sql"; \
+	echo "Created $(MIGRATIONS_DIR)/$${NEXT}_$(NAME).down.sql"
+
+.PHONY: seed
+seed: ## Seed database with sample data
+	@psql "$(DATABASE_URL)" -f scripts/seed.sql
+
+# ——————————————————————————————————————————————
 # Kubernetes (local)
 # ——————————————————————————————————————————————
 .PHONY: cluster-up
@@ -109,16 +146,7 @@ cluster-down: ## Delete local k3d cluster (idempotent)
 
 .PHONY: cnpg-install
 cnpg-install: ## Install CNPG operator on local cluster (idempotent)
-	@if kubectl get deployment -n cnpg-system cnpg-controller-manager >/dev/null 2>&1; then \
-		echo "CNPG operator already installed."; \
-	else \
-		kubectl apply --server-side -f \
-			https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-$(shell echo $(CNPG_VERSION) | cut -d. -f1-2)/releases/cnpg-$(CNPG_VERSION).yaml; \
-		echo "Waiting for CNPG operator to be ready..."; \
-		kubectl wait --for=condition=Available deployment/cnpg-controller-manager \
-			-n cnpg-system --timeout=120s; \
-		echo "CNPG operator installed and ready."; \
-	fi
+	CNPG_VERSION=$(CNPG_VERSION) bash scripts/cluster-setup.sh
 
 # ——————————————————————————————————————————————
 # Docker

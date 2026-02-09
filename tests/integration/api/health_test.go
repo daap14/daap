@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/daap14/daap/internal/api"
+	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/k8s"
 )
 
@@ -27,11 +28,24 @@ func (m *mockHealthChecker) CheckConnectivity(_ context.Context) k8s.Connectivit
 	return m.status
 }
 
+// mockDBPinger implements handler.DBPinger for integration tests.
+type mockDBPinger struct {
+	err error
+}
+
+func (m *mockDBPinger) Ping(_ context.Context) error {
+	return m.err
+}
+
 // startTestServer creates an HTTP server on a random port and returns its base URL.
-func startTestServer(t *testing.T, checker k8s.HealthChecker, version string) (string, *http.Server) {
+func startTestServer(t *testing.T, checker k8s.HealthChecker, pinger handler.DBPinger, version string) (string, *http.Server) {
 	t.Helper()
 
-	router := api.NewRouter(checker, version)
+	router := api.NewRouter(api.RouterDeps{
+		K8sChecker: checker,
+		DBPinger:   pinger,
+		Version:    version,
+	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -56,7 +70,8 @@ func TestHealthEndpoint_Healthy(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.31.0"},
 	}
-	baseURL, srv := startTestServer(t, checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	baseURL, srv := startTestServer(t, checker, pinger, "0.1.0")
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	// Act
@@ -90,6 +105,9 @@ func TestHealthEndpoint_Healthy(t *testing.T) {
 	assert.Equal(t, true, k8sStatus["connected"])
 	assert.Equal(t, "v1.31.0", k8sStatus["version"])
 
+	dbStatus := data["database"].(map[string]interface{})
+	assert.Equal(t, true, dbStatus["connected"])
+
 	// Verify meta
 	meta := env["meta"].(map[string]interface{})
 	requestID := meta["requestId"].(string)
@@ -106,7 +124,8 @@ func TestHealthEndpoint_Degraded(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: false},
 	}
-	baseURL, srv := startTestServer(t, checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	baseURL, srv := startTestServer(t, checker, pinger, "0.1.0")
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	// Act
@@ -137,7 +156,8 @@ func TestHealthEndpoint_ForwardsRequestID(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.31.0"},
 	}
-	baseURL, srv := startTestServer(t, checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	baseURL, srv := startTestServer(t, checker, pinger, "0.1.0")
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	customID := "my-trace-id-12345"
@@ -168,7 +188,8 @@ func TestHealthEndpoint_NotFoundOnOtherPaths(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.31.0"},
 	}
-	baseURL, srv := startTestServer(t, checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	baseURL, srv := startTestServer(t, checker, pinger, "0.1.0")
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	resp, err := http.Get(baseURL + "/nonexistent")
@@ -182,7 +203,8 @@ func TestHealthEndpoint_GracefulShutdown(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.31.0"},
 	}
-	baseURL, srv := startTestServer(t, checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	baseURL, srv := startTestServer(t, checker, pinger, "0.1.0")
 
 	// Verify server is running
 	resp, err := http.Get(baseURL + "/health")
@@ -205,7 +227,8 @@ func TestHealthEndpoint_MethodNotAllowed(t *testing.T) {
 	checker := &mockHealthChecker{
 		status: k8s.ConnectivityStatus{Connected: true, Version: "v1.31.0"},
 	}
-	baseURL, srv := startTestServer(t, checker, "0.1.0")
+	pinger := &mockDBPinger{err: nil}
+	baseURL, srv := startTestServer(t, checker, pinger, "0.1.0")
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/health", nil)

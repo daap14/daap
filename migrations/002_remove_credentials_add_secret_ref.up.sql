@@ -1,0 +1,3 @@
+ALTER TABLE databases ADD COLUMN secret_name VARCHAR(255);
+ALTER TABLE databases DROP COLUMN IF EXISTS username;
+ALTER TABLE databases DROP COLUMN IF EXISTS password;

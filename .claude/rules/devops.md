@@ -33,6 +33,8 @@ globs:
 - Cache dependencies between runs
 - Fail fast on lint/type errors before running tests
 - Use matrix strategy for multiple runtime versions if needed
+- When the test job uses a database service container, ALWAYS run migrations before tests
+- Every new config variable added to config.go must be documented in `.env.example`
 
 ## Environment Config
 - Document all variables in `.env.example`

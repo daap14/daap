@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: DAAP API
   description: Database as a Service platform API
-  version: 0.1.0
+  version: 0.2.0
   license:
     name: MIT
 
@@ -72,6 +72,422 @@ paths:
                     meta:
                       requestId: "550e8400-e29b-41d4-a716-446655440002"
                       timestamp: "2026-01-15T10:30:00Z"
+
+  /databases:
+    post:
+      summary: Create a new database
+      description: >
+        Submits a request to provision a new CNPG-backed PostgreSQL database.
+        The database is created in "provisioning" status and will transition to
+        "ready" once the CNPG Cluster and Pooler are available on Kubernetes.
+      operationId: createDatabase
+      tags:
+        - databases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDatabaseRequest"
+            examples:
+              minimal:
+                summary: Minimal request (required fields only)
+                value:
+                  name: my-app-db
+                  owner_team: platform-team
+              full:
+                summary: Full request with all optional fields
+                value:
+                  name: my-app-db
+                  owner_team: platform-team
+                  purpose: Primary database for the user service
+                  instances: 3
+                  storage_size: 10Gi
+      responses:
+        "201":
+          description: Database creation initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseResponse"
+              examples:
+                created:
+                  summary: Database provisioning started
+                  value:
+                    data:
+                      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                      name: my-app-db
+                      owner_team: platform-team
+                      purpose: Primary database for the user service
+                      namespace: default
+                      cluster_name: cnpg-my-app-db
+                      pooler_name: cnpg-my-app-db-pooler
+                      status: provisioning
+                      connection: null
+                      created_at: "2026-02-01T12:00:00Z"
+                      updated_at: "2026-02-01T12:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440010"
+                      timestamp: "2026-02-01T12:00:00Z"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+              examples:
+                missingFields:
+                  summary: Required fields missing
+                  value:
+                    data: null
+                    error:
+                      code: VALIDATION_ERROR
+                      message: Request validation failed
+                      details:
+                        fields:
+                          name: "name is required"
+                          owner_team: "owner_team is required"
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440011"
+                      timestamp: "2026-02-01T12:00:00Z"
+        "409":
+          description: Database name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                conflict:
+                  summary: Duplicate database name
+                  value:
+                    data: null
+                    error:
+                      code: CONFLICT
+                      message: "A database with name 'my-app-db' already exists"
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440012"
+                      timestamp: "2026-02-01T12:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: List databases
+      description: >
+        Returns a paginated list of databases, optionally filtered by owner team,
+        status, or name. Only active (non-deleted) databases are returned by default.
+      operationId: listDatabases
+      tags:
+        - databases
+      parameters:
+        - name: owner_team
+          in: query
+          required: false
+          description: Filter by owner team (exact match)
+          schema:
+            type: string
+          example: platform-team
+        - name: status
+          in: query
+          required: false
+          description: Filter by status
+          schema:
+            type: string
+            enum:
+              - provisioning
+              - ready
+              - error
+              - deleting
+          example: ready
+        - name: name
+          in: query
+          required: false
+          description: Filter by name (case-insensitive partial match via ILIKE)
+          schema:
+            type: string
+          example: my-app
+        - name: page
+          in: query
+          required: false
+          description: Page number (1-based)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: limit
+          in: query
+          required: false
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+      responses:
+        "200":
+          description: List of databases
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseListResponse"
+              examples:
+                withResults:
+                  summary: Page of results
+                  value:
+                    data:
+                      - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        name: my-app-db
+                        owner_team: platform-team
+                        purpose: Primary database for the user service
+                        namespace: default
+                        cluster_name: cnpg-my-app-db
+                        pooler_name: cnpg-my-app-db-pooler
+                        status: ready
+                        connection:
+                          host: cnpg-my-app-db-pooler.default.svc
+                          port: 5432
+                          dbname: app
+                          username: app
+                          password: "generated-secret"
+                        created_at: "2026-02-01T12:00:00Z"
+                        updated_at: "2026-02-01T12:05:00Z"
+                    error: null
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440020"
+                      timestamp: "2026-02-01T12:10:00Z"
+                      total: 1
+                      page: 1
+                      limit: 20
+                emptyResults:
+                  summary: No databases found
+                  value:
+                    data: []
+                    error: null
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440021"
+                      timestamp: "2026-02-01T12:10:00Z"
+                      total: 0
+                      page: 1
+                      limit: 20
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /databases/{id}:
+    get:
+      summary: Get a database by ID
+      description: >
+        Returns the full details of a single database, including connection
+        details if the database is in "ready" status.
+      operationId: getDatabase
+      tags:
+        - databases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Database UUID
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        "200":
+          description: Database found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseResponse"
+              examples:
+                ready:
+                  summary: Database is ready with connection details
+                  value:
+                    data:
+                      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                      name: my-app-db
+                      owner_team: platform-team
+                      purpose: Primary database for the user service
+                      namespace: default
+                      cluster_name: cnpg-my-app-db
+                      pooler_name: cnpg-my-app-db-pooler
+                      status: ready
+                      connection:
+                        host: cnpg-my-app-db-pooler.default.svc
+                        port: 5432
+                        dbname: app
+                        username: app
+                        password: "generated-secret"
+                      created_at: "2026-02-01T12:00:00Z"
+                      updated_at: "2026-02-01T12:05:00Z"
+                    error: null
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440030"
+                      timestamp: "2026-02-01T12:10:00Z"
+        "404":
+          description: Database not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  summary: No database with this ID
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: "Database not found"
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440031"
+                      timestamp: "2026-02-01T12:10:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      summary: Update a database
+      description: >
+        Partially updates a database record. Only mutable fields (owner_team
+        and purpose) can be changed. The database must be active (not deleted).
+      operationId: updateDatabase
+      tags:
+        - databases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Database UUID
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDatabaseRequest"
+            examples:
+              updateOwner:
+                summary: Change owner team
+                value:
+                  owner_team: backend-team
+              updatePurpose:
+                summary: Change purpose
+                value:
+                  purpose: Migrated to support the order service
+              updateBoth:
+                summary: Change both fields
+                value:
+                  owner_team: backend-team
+                  purpose: Migrated to support the order service
+      responses:
+        "200":
+          description: Database updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseResponse"
+              examples:
+                updated:
+                  summary: Database after update
+                  value:
+                    data:
+                      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                      name: my-app-db
+                      owner_team: backend-team
+                      purpose: Migrated to support the order service
+                      namespace: default
+                      cluster_name: cnpg-my-app-db
+                      pooler_name: cnpg-my-app-db-pooler
+                      status: ready
+                      connection:
+                        host: cnpg-my-app-db-pooler.default.svc
+                        port: 5432
+                        dbname: app
+                        username: app
+                        password: "generated-secret"
+                      created_at: "2026-02-01T12:00:00Z"
+                      updated_at: "2026-02-01T14:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440040"
+                      timestamp: "2026-02-01T14:00:00Z"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+        "404":
+          description: Database not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Delete a database
+      description: >
+        Initiates deletion of a database. Sets the status to "deleting" and
+        triggers removal of CNPG Kubernetes resources. The record is soft-deleted
+        (deleted_at is set) once cleanup is complete.
+      operationId: deleteDatabase
+      tags:
+        - databases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Database UUID
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        "204":
+          description: Database deletion initiated
+        "404":
+          description: Database not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  summary: No database with this ID
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: "Database not found"
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440051"
+                      timestamp: "2026-02-01T15:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -204,5 +620,249 @@ components:
           example: null
         error:
           $ref: "#/components/schemas/ResponseError"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    # --- Database Schemas ---
+    ConnectionDetails:
+      type: object
+      description: PostgreSQL connection details, populated when the database is ready
+      required:
+        - host
+        - port
+        - dbname
+        - username
+        - password
+      properties:
+        host:
+          type: string
+          description: PostgreSQL host (typically the CNPG Pooler service DNS name)
+          example: cnpg-my-app-db-pooler.default.svc
+        port:
+          type: integer
+          description: PostgreSQL port
+          example: 5432
+        dbname:
+          type: string
+          description: PostgreSQL database name
+          example: app
+        username:
+          type: string
+          description: PostgreSQL username
+          example: app
+        password:
+          type: string
+          description: PostgreSQL password
+          example: "generated-secret"
+
+    Database:
+      type: object
+      description: Full database resource representation
+      required:
+        - id
+        - name
+        - owner_team
+        - purpose
+        - namespace
+        - cluster_name
+        - pooler_name
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique database identifier
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        name:
+          type: string
+          description: User-provided database name (unique among active databases)
+          maxLength: 63
+          example: my-app-db
+        owner_team:
+          type: string
+          description: Team that owns this database
+          example: platform-team
+        purpose:
+          type: string
+          description: Free-text description of the database's purpose
+          example: Primary database for the user service
+        namespace:
+          type: string
+          description: Kubernetes namespace where the CNPG resources are deployed
+          example: default
+        cluster_name:
+          type: string
+          description: Name of the CNPG Cluster custom resource
+          example: cnpg-my-app-db
+        pooler_name:
+          type: string
+          description: Name of the CNPG Pooler (PgBouncer) custom resource
+          example: cnpg-my-app-db-pooler
+        status:
+          type: string
+          description: Current lifecycle status
+          enum:
+            - provisioning
+            - ready
+            - error
+            - deleting
+            - deleted
+          example: ready
+        connection:
+          oneOf:
+            - $ref: "#/components/schemas/ConnectionDetails"
+            - type: "null"
+          description: Connection details (null until the database is ready)
+        created_at:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-02-01T12:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-02-01T12:05:00Z"
+
+    CreateDatabaseRequest:
+      type: object
+      description: Request body for creating a new database
+      required:
+        - name
+        - owner_team
+      properties:
+        name:
+          type: string
+          description: >
+            Database name. Must be unique among active databases. Used as a base
+            for generating Kubernetes resource names. Must comply with RFC 1123
+            (lowercase alphanumeric and hyphens, max 63 characters).
+          maxLength: 63
+          pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+          example: my-app-db
+        owner_team:
+          type: string
+          description: Team that will own this database
+          maxLength: 255
+          example: platform-team
+        purpose:
+          type: string
+          description: Free-text description of the database's purpose
+          default: ""
+          example: Primary database for the user service
+        instances:
+          type: integer
+          description: Number of PostgreSQL instances (CNPG replicas). Defaults to 1.
+          minimum: 1
+          maximum: 10
+          default: 1
+          example: 3
+        storage_size:
+          type: string
+          description: >
+            Storage size for each instance in Kubernetes quantity format
+            (e.g., "1Gi", "10Gi"). Defaults to "1Gi".
+          default: "1Gi"
+          pattern: "^[0-9]+[KMGTPE]i?$"
+          example: "10Gi"
+
+    UpdateDatabaseRequest:
+      type: object
+      description: >
+        Request body for updating a database. At least one field must be provided.
+        Only mutable metadata fields can be updated.
+      properties:
+        owner_team:
+          type: string
+          description: New owner team
+          maxLength: 255
+          example: backend-team
+        purpose:
+          type: string
+          description: Updated purpose description
+          example: Migrated to support the order service
+
+    DatabaseResponse:
+      type: object
+      description: Single database response envelope
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/Database"
+        error:
+          nullable: true
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    DatabaseListResponse:
+      type: object
+      description: Database list response envelope with pagination metadata
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Database"
+        error:
+          nullable: true
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ListMeta"
+
+    ValidationErrorDetails:
+      type: object
+      description: Field-level validation error details
+      required:
+        - fields
+      properties:
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of field names to validation error messages
+          example:
+            name: "name is required"
+            owner_team: "owner_team must be at most 255 characters"
+
+    ValidationErrorResponse:
+      type: object
+      description: Response envelope for validation errors
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          nullable: true
+          description: Always null on error
+          example: null
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - details
+          properties:
+            code:
+              type: string
+              description: Always VALIDATION_ERROR for validation failures
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              description: Human-readable summary
+              example: Request validation failed
+            details:
+              $ref: "#/components/schemas/ValidationErrorDetails"
         meta:
           $ref: "#/components/schemas/ResponseMeta"

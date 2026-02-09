@@ -15,6 +15,10 @@ services:
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
       - NAMESPACE=${NAMESPACE:-default}
       - VERSION=dev
+      - DATABASE_URL=postgres://daap:daap@postgres:5432/daap?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 10s
@@ -22,6 +26,23 @@ services:
       retries: 3
       start_period: 10s
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: daap
+      POSTGRES_PASSWORD: daap
+      POSTGRES_DB: daap
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   go-modules:
   go-build-cache:
+  pgdata:

@@ -74,6 +74,30 @@ func Success(w http.ResponseWriter, status int, data any, requestID string) {
 	})
 }
 
+// SuccessList writes a successful list JSON response with pagination metadata.
+func SuccessList(w http.ResponseWriter, status int, data any, total, page, limit int, requestID string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	env := ListEnvelope{
+		Data:  data,
+		Error: nil,
+		Meta: ListMeta{
+			Meta:  NewMeta(requestID),
+			Total: total,
+			Page:  page,
+			Limit: limit,
+		},
+	}
+	if err := json.NewEncoder(w).Encode(env); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
+}
+
+// NoContent writes a 204 No Content response.
+func NoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Err writes an error JSON response.
 func Err(w http.ResponseWriter, status int, code string, message string, requestID string) {
 	JSON(w, status, Envelope{
