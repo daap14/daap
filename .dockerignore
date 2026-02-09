@@ -1,0 +1,16 @@
+.git
+.github
+.claude
+.env
+.env.local
+.env.*.local
+bin/
+coverage.out
+coverage.html
+docs/
+*.md
+!README.md
+.DS_Store
+.idea/
+.vscode/
+tmp/

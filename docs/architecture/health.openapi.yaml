@@ -1,0 +1,208 @@
+openapi: "3.1.0"
+info:
+  title: DAAP API
+  description: Database as a Service platform API
+  version: 0.1.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: >
+        Returns the health status of the API server, including Kubernetes
+        connectivity. Returns "healthy" when all dependencies are reachable,
+        "degraded" when Kubernetes is unreachable but the server is running.
+      operationId: getHealth
+      tags:
+        - system
+      responses:
+        "200":
+          description: Server is healthy or degraded (K8s unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                healthy:
+                  summary: All systems operational
+                  value:
+                    data:
+                      status: healthy
+                      version: 0.1.0
+                      kubernetes:
+                        connected: true
+                        version: "1.31.0"
+                    error: null
+                    meta:
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      timestamp: "2026-01-15T10:30:00Z"
+                degraded:
+                  summary: Kubernetes unreachable
+                  value:
+                    data:
+                      status: degraded
+                      version: 0.1.0
+                      kubernetes:
+                        connected: false
+                        version: null
+                    error: null
+                    meta:
+                      requestId: "550e8400-e29b-41d4-a716-446655440001"
+                      timestamp: "2026-01-15T10:30:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                internalError:
+                  summary: Unexpected error
+                  value:
+                    data: null
+                    error:
+                      code: INTERNAL_ERROR
+                      message: An unexpected error occurred
+                    meta:
+                      requestId: "550e8400-e29b-41d4-a716-446655440002"
+                      timestamp: "2026-01-15T10:30:00Z"
+
+components:
+  schemas:
+    # --- Response Envelope ---
+    ResponseMeta:
+      type: object
+      required:
+        - requestId
+        - timestamp
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Unique identifier for this request
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of the response
+          example: "2026-01-15T10:30:00Z"
+
+    ResponseError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: INTERNAL_ERROR
+        message:
+          type: string
+          description: Human-readable error description
+          example: An unexpected error occurred
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional additional error context
+
+    ListMeta:
+      type: object
+      description: Additional metadata for list responses
+      allOf:
+        - $ref: "#/components/schemas/ResponseMeta"
+        - type: object
+          required:
+            - total
+            - page
+            - limit
+          properties:
+            total:
+              type: integer
+              description: Total number of items
+              example: 42
+            page:
+              type: integer
+              description: Current page number
+              example: 1
+            limit:
+              type: integer
+              description: Items per page
+              example: 20
+
+    # --- Health Endpoint ---
+    KubernetesStatus:
+      type: object
+      required:
+        - connected
+      properties:
+        connected:
+          type: boolean
+          description: Whether the API server can reach the Kubernetes API
+          example: true
+        version:
+          type: string
+          nullable: true
+          description: Kubernetes server version (null if not connected)
+          example: "1.31.0"
+
+    HealthData:
+      type: object
+      required:
+        - status
+        - version
+        - kubernetes
+      properties:
+        status:
+          type: string
+          enum:
+            - healthy
+            - degraded
+          description: >
+            "healthy" when all dependencies are reachable,
+            "degraded" when the server runs but a dependency is down
+          example: healthy
+        version:
+          type: string
+          description: API server version
+          example: 0.1.0
+        kubernetes:
+          $ref: "#/components/schemas/KubernetesStatus"
+
+    HealthResponse:
+      type: object
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/HealthData"
+        error:
+          nullable: true
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    ErrorResponse:
+      type: object
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          nullable: true
+          description: Always null on error
+          example: null
+        error:
+          $ref: "#/components/schemas/ResponseError"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"

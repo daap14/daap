@@ -1,0 +1,17 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  bin = "./tmp/main"
+  cmd = "go build -o ./tmp/main ./cmd/server"
+  delay = 1000
+  exclude_dir = ["bin", "tmp", "vendor", "tests", "docs", ".git", ".claude", ".github"]
+  exclude_regex = ["_test\\.go$"]
+  include_ext = ["go", "toml", "yaml"]
+  kill_delay = 500
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

@@ -9,11 +9,16 @@ venv/
 # Build outputs
 dist/
 build/
+bin/
 *.exe
 *.dll
 *.so
 *.dylib
 target/
+
+# Go
+coverage.out
+coverage.html
 
 # Environment files
 .env
