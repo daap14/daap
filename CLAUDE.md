@@ -4,9 +4,10 @@
 DAAP (Developer AI-Assisted Product) transforms a product manifesto into a working API/backend through iterative releases with feedback loops. Claude operates as the entire development team via agent teams.
 
 ## Current State
-- **Phase**: Manifesto broken down, ready for v0.1 planning
-- **Current Iteration**: v0.1 — Foundation (Walking Skeleton)
-- **Tech Stack**: Go (Chi router, client-go, CNPG Go API types — see ADR 001)
+- **Phase**: v0.2 released, ready for v0.3 planning
+- **Current Iteration**: v0.3 (next)
+- **Last Release**: v0.2.0 — Database Lifecycle (CRUD, CNPG provisioning, reconciler)
+- **Tech Stack**: Go (Chi router, client-go, CNPG Go API types, pgx — see ADRs 001, 002)
 
 ## Tech Stack
 - **Language**: Go 1.22+
@@ -45,8 +46,10 @@ daap/
 │   ├── iterations/        # vX.Y.md specs and plans
 │   ├── architecture/      # ADRs in decisions/
 │   └── feedback/          # Per-iteration feedback logs
-├── src/                   # Production code (after tech stack decision)
-└── tests/                 # Test files
+├── internal/              # Production code (Go packages)
+├── cmd/                   # Entry points (server)
+├── migrations/            # Database migrations
+└── tests/                 # Test files (unit + integration)
 ```
 
 ## Conventions
