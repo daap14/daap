@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: DAAP API
   description: Database as a Service platform API
-  version: 0.4.0
+  version: 0.5.0
   license:
     name: MIT
 
@@ -38,7 +38,7 @@ paths:
                   value:
                     data:
                       status: healthy
-                      version: 0.4.0
+                      version: 0.5.0
                       kubernetes:
                         connected: true
                         version: "v1.31.0"
@@ -53,7 +53,7 @@ paths:
                   value:
                     data:
                       status: degraded
-                      version: 0.4.0
+                      version: 0.5.0
                       kubernetes:
                         connected: false
                         version: null
@@ -682,11 +682,13 @@ paths:
                 value:
                   name: my-app-db
                   ownerTeam: platform-team
+                  tier: standard
               full:
                 summary: Full request with all optional fields
                 value:
                   name: my-app-db
                   ownerTeam: platform-team
+                  tier: standard
                   purpose: Primary database for the user service
                   namespace: staging
       responses:
@@ -704,6 +706,7 @@ paths:
                       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       name: my-app-db
                       ownerTeam: platform-team
+                      tier: standard
                       purpose: Primary database for the user service
                       namespace: default
                       clusterName: cnpg-my-app-db
@@ -736,6 +739,8 @@ paths:
                           message: "name is required"
                         - field: ownerTeam
                           message: "ownerTeam is required"
+                        - field: tier
+                          message: "tier is required"
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440011"
                       timestamp: "2026-02-01T12:00:00Z"
@@ -867,6 +872,7 @@ paths:
                       - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                         name: my-app-db
                         ownerTeam: platform-team
+                        tier: standard
                         purpose: Primary database for the user service
                         namespace: default
                         clusterName: cnpg-my-app-db
@@ -965,6 +971,7 @@ paths:
                       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       name: my-app-db
                       ownerTeam: platform-team
+                      tier: standard
                       purpose: Primary database for the user service
                       namespace: default
                       clusterName: cnpg-my-app-db
@@ -986,6 +993,7 @@ paths:
                       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       name: my-app-db
                       ownerTeam: platform-team
+                      tier: standard
                       purpose: Primary database for the user service
                       namespace: default
                       clusterName: cnpg-my-app-db
@@ -1228,6 +1236,539 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /tiers:
+    post:
+      summary: Create a tier
+      description: >
+        Creates a new tier with infrastructure parameters (cluster sizing,
+        storage, PostgreSQL version, pooler config, destruction strategy).
+        Platform role only.
+      operationId: createTier
+      tags:
+        - tiers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTierRequest"
+            examples:
+              standard:
+                summary: Create a standard tier
+                value:
+                  name: standard
+                  description: Standard tier for production workloads
+                  instances: 2
+                  cpu: "500m"
+                  memory: "512Mi"
+                  storageSize: "10Gi"
+                  storageClass: ""
+                  pgVersion: "16"
+                  poolMode: transaction
+                  maxConnections: 100
+                  destructionStrategy: freeze
+                  backupEnabled: true
+      responses:
+        "201":
+          description: Tier created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TierResponse"
+              examples:
+                created:
+                  summary: Tier created successfully
+                  value:
+                    data:
+                      id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+                      name: standard
+                      description: Standard tier for production workloads
+                      instances: 2
+                      cpu: "500m"
+                      memory: "512Mi"
+                      storageSize: "10Gi"
+                      storageClass: ""
+                      pgVersion: "16"
+                      poolMode: transaction
+                      maxConnections: 100
+                      destructionStrategy: freeze
+                      backupEnabled: true
+                      createdAt: "2026-02-10T14:00:00Z"
+                      updatedAt: "2026-02-10T14:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440300"
+                      timestamp: "2026-02-10T14:00:00Z"
+        "400":
+          description: Validation error or invalid JSON
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingFields:
+                  summary: Required fields missing
+                  value:
+                    data: null
+                    error:
+                      code: VALIDATION_ERROR
+                      message: Input validation failed
+                      details:
+                        - field: name
+                          message: "name is required"
+                        - field: cpu
+                          message: "cpu is required"
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440301"
+                      timestamp: "2026-02-10T14:00:00Z"
+                invalidJson:
+                  summary: Malformed request body
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_JSON
+                      message: Request body must be valid JSON
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440302"
+                      timestamp: "2026-02-10T14:00:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions (platform role required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbidden:
+                  summary: Non-platform user attempted tier creation
+                  value:
+                    data: null
+                    error:
+                      code: FORBIDDEN
+                      message: Insufficient permissions
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440303"
+                      timestamp: "2026-02-10T14:00:00Z"
+        "409":
+          description: Tier name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                duplicate:
+                  summary: Duplicate tier name
+                  value:
+                    data: null
+                    error:
+                      code: DUPLICATE_NAME
+                      message: "A tier named \"standard\" already exists"
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440304"
+                      timestamp: "2026-02-10T14:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: List tiers
+      description: >
+        Returns all tiers. Platform users see full details (all 15 fields).
+        Product users see a summary (id, name, description only).
+        Requires platform or product role.
+      operationId: listTiers
+      tags:
+        - tiers
+      responses:
+        "200":
+          description: List of tiers
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TierListResponse"
+                  - $ref: "#/components/schemas/TierSummaryListResponse"
+              examples:
+                platformView:
+                  summary: Full tier details (platform users)
+                  value:
+                    data:
+                      - id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+                        name: standard
+                        description: Standard tier for production workloads
+                        instances: 2
+                        cpu: "500m"
+                        memory: "512Mi"
+                        storageSize: "10Gi"
+                        storageClass: ""
+                        pgVersion: "16"
+                        poolMode: transaction
+                        maxConnections: 100
+                        destructionStrategy: freeze
+                        backupEnabled: true
+                        createdAt: "2026-02-10T14:00:00Z"
+                        updatedAt: "2026-02-10T14:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440310"
+                      timestamp: "2026-02-10T14:05:00Z"
+                      total: 1
+                      page: 1
+                      limit: 100
+                productView:
+                  summary: Summary only (product users)
+                  value:
+                    data:
+                      - id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+                        name: standard
+                        description: Standard tier for production workloads
+                    error: null
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440311"
+                      timestamp: "2026-02-10T14:05:00Z"
+                      total: 1
+                      page: 1
+                      limit: 100
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tiers/{id}:
+    get:
+      summary: Get a tier by ID
+      description: >
+        Returns a single tier by ID. Platform users see full details.
+        Product users see a summary (id, name, description only).
+        Requires platform or product role.
+      operationId: getTier
+      tags:
+        - tiers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Tier UUID
+          schema:
+            type: string
+            format: uuid
+          example: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+      responses:
+        "200":
+          description: Tier found
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TierResponse"
+                  - $ref: "#/components/schemas/TierSummaryResponse"
+              examples:
+                platformView:
+                  summary: Full tier details (platform users)
+                  value:
+                    data:
+                      id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+                      name: standard
+                      description: Standard tier for production workloads
+                      instances: 2
+                      cpu: "500m"
+                      memory: "512Mi"
+                      storageSize: "10Gi"
+                      storageClass: ""
+                      pgVersion: "16"
+                      poolMode: transaction
+                      maxConnections: 100
+                      destructionStrategy: freeze
+                      backupEnabled: true
+                      createdAt: "2026-02-10T14:00:00Z"
+                      updatedAt: "2026-02-10T14:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440320"
+                      timestamp: "2026-02-10T14:10:00Z"
+                productView:
+                  summary: Summary only (product users)
+                  value:
+                    data:
+                      id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+                      name: standard
+                      description: Standard tier for production workloads
+                    error: null
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440321"
+                      timestamp: "2026-02-10T14:10:00Z"
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440322"
+                      timestamp: "2026-02-10T14:10:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Tier not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  summary: No tier with this ID
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: Tier not found
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440323"
+                      timestamp: "2026-02-10T14:10:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      summary: Update a tier
+      description: >
+        Partially updates a tier. Only mutable fields can be changed.
+        Attempting to change the name returns an IMMUTABLE_FIELD error.
+        Platform role only.
+      operationId: updateTier
+      tags:
+        - tiers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Tier UUID
+          schema:
+            type: string
+            format: uuid
+          example: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTierRequest"
+            examples:
+              updateInstances:
+                summary: Scale up instances
+                value:
+                  instances: 3
+              updateResources:
+                summary: Increase CPU and memory
+                value:
+                  cpu: "1"
+                  memory: "1Gi"
+      responses:
+        "200":
+          description: Tier updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TierResponse"
+        "400":
+          description: Invalid JSON, invalid ID, immutable field, or validation error
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidJson:
+                  summary: Malformed request body
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_JSON
+                      message: Request body must be valid JSON
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440330"
+                      timestamp: "2026-02-10T14:15:00Z"
+                immutableField:
+                  summary: Attempted to change name
+                  value:
+                    data: null
+                    error:
+                      code: IMMUTABLE_FIELD
+                      message: name cannot be changed
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440331"
+                      timestamp: "2026-02-10T14:15:00Z"
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440332"
+                      timestamp: "2026-02-10T14:15:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions (platform role required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Tier not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Delete a tier
+      description: >
+        Deletes a tier by ID. Fails if the tier has active databases
+        referencing it. Platform role only.
+      operationId: deleteTier
+      tags:
+        - tiers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Tier UUID
+          schema:
+            type: string
+            format: uuid
+          example: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+      responses:
+        "204":
+          description: Tier deleted
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440340"
+                      timestamp: "2026-02-10T14:20:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions (platform role required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Tier not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  summary: No tier with this ID
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: Tier not found
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440341"
+                      timestamp: "2026-02-10T14:20:00Z"
+        "409":
+          description: Tier has active databases
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                tierHasDatabases:
+                  summary: Cannot delete tier with databases
+                  value:
+                    data: null
+                    error:
+                      code: TIER_HAS_DATABASES
+                      message: Cannot delete tier with active databases
+                    meta:
+                      requestId: "880e8400-e29b-41d4-a716-446655440342"
+                      timestamp: "2026-02-10T14:20:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -1277,6 +1818,7 @@ components:
             - UNAUTHORIZED
             - FORBIDDEN
             - TEAM_HAS_USERS
+            - TIER_HAS_DATABASES
           example: INTERNAL_ERROR
         message:
           type: string
@@ -1734,6 +2276,10 @@ components:
           type: string
           description: Team that owns this database
           example: platform-team
+        tier:
+          type: string
+          description: Tier name used when the database was created
+          example: standard
         purpose:
           type: string
           description: Free-text description of the database's purpose
@@ -1789,6 +2335,7 @@ components:
       required:
         - name
         - ownerTeam
+        - tier
       properties:
         name:
           type: string
@@ -1803,6 +2350,12 @@ components:
           type: string
           description: Team that will own this database
           example: platform-team
+        tier:
+          type: string
+          description: >
+            Tier name to use for this database. Determines cluster sizing,
+            storage, PostgreSQL version, and pooler configuration.
+          example: standard
         purpose:
           type: string
           description: Free-text description of the database's purpose
@@ -1868,6 +2421,374 @@ components:
         meta:
           $ref: "#/components/schemas/ListMeta"
 
+    # --- Tier Schemas ---
+    Tier:
+      type: object
+      description: >
+        Full tier resource representation with all infrastructure parameters.
+        Returned to platform users.
+      required:
+        - id
+        - name
+        - description
+        - instances
+        - cpu
+        - memory
+        - storageSize
+        - storageClass
+        - pgVersion
+        - poolMode
+        - maxConnections
+        - destructionStrategy
+        - backupEnabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique tier identifier
+          example: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+        name:
+          type: string
+          description: Tier name (unique, DNS-compatible)
+          maxLength: 63
+          pattern: "^[a-z][a-z0-9-]{1,61}[a-z0-9]$"
+          example: standard
+        description:
+          type: string
+          description: Human-readable tier description
+          maxLength: 1000
+          example: Standard tier for production workloads
+        instances:
+          type: integer
+          description: Number of PostgreSQL instances in the CNPG cluster
+          minimum: 1
+          maximum: 10
+          example: 2
+        cpu:
+          type: string
+          description: CPU resource request/limit (K8s quantity format)
+          example: "500m"
+        memory:
+          type: string
+          description: Memory resource request/limit (K8s quantity format)
+          example: "512Mi"
+        storageSize:
+          type: string
+          description: Persistent volume storage size (K8s quantity format)
+          example: "10Gi"
+        storageClass:
+          type: string
+          description: Kubernetes StorageClass name (empty for cluster default)
+          maxLength: 255
+          example: ""
+        pgVersion:
+          type: string
+          description: PostgreSQL major version
+          enum:
+            - "15"
+            - "16"
+            - "17"
+          example: "16"
+        poolMode:
+          type: string
+          description: PgBouncer pool mode
+          enum:
+            - transaction
+            - session
+            - statement
+          example: transaction
+        maxConnections:
+          type: integer
+          description: Maximum PgBouncer client connections
+          minimum: 10
+          maximum: 10000
+          example: 100
+        destructionStrategy:
+          type: string
+          description: Strategy applied when database is deleted
+          enum:
+            - freeze
+            - archive
+            - hard_delete
+          example: freeze
+        backupEnabled:
+          type: boolean
+          description: Whether automated backups are enabled
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-02-10T14:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-02-10T14:00:00Z"
+
+    TierSummary:
+      type: object
+      description: >
+        Redacted tier representation for product users. Hides infrastructure
+        parameters, showing only identification and description.
+      required:
+        - id
+        - name
+        - description
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique tier identifier
+          example: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+        name:
+          type: string
+          description: Tier name
+          example: standard
+        description:
+          type: string
+          description: Human-readable tier description
+          example: Standard tier for production workloads
+
+    CreateTierRequest:
+      type: object
+      description: Request body for creating a new tier
+      required:
+        - name
+        - instances
+        - cpu
+        - memory
+        - storageSize
+        - pgVersion
+        - poolMode
+        - maxConnections
+        - destructionStrategy
+      properties:
+        name:
+          type: string
+          description: >
+            Tier name. Must be unique. Must be lowercase alphanumeric with
+            hyphens, 3-63 characters, starting with a letter.
+          maxLength: 63
+          pattern: "^[a-z][a-z0-9-]{1,61}[a-z0-9]$"
+          example: standard
+        description:
+          type: string
+          description: Human-readable tier description
+          maxLength: 1000
+          default: ""
+          example: Standard tier for production workloads
+        instances:
+          type: integer
+          description: Number of PostgreSQL instances (1-10)
+          minimum: 1
+          maximum: 10
+          example: 2
+        cpu:
+          type: string
+          description: "CPU resource quantity (e.g., \"500m\", \"1\", \"2.5\")"
+          example: "500m"
+        memory:
+          type: string
+          description: "Memory resource quantity (e.g., \"512Mi\", \"1Gi\")"
+          example: "512Mi"
+        storageSize:
+          type: string
+          description: "Storage size (e.g., \"1Gi\", \"10Gi\")"
+          example: "10Gi"
+        storageClass:
+          type: string
+          description: Kubernetes StorageClass name (empty for cluster default)
+          maxLength: 255
+          default: ""
+          example: ""
+        pgVersion:
+          type: string
+          description: PostgreSQL major version
+          enum:
+            - "15"
+            - "16"
+            - "17"
+          example: "16"
+        poolMode:
+          type: string
+          description: PgBouncer pool mode
+          enum:
+            - transaction
+            - session
+            - statement
+          example: transaction
+        maxConnections:
+          type: integer
+          description: Maximum PgBouncer client connections (10-10000)
+          minimum: 10
+          maximum: 10000
+          example: 100
+        destructionStrategy:
+          type: string
+          description: Strategy applied when database is deleted
+          enum:
+            - freeze
+            - archive
+            - hard_delete
+          example: freeze
+        backupEnabled:
+          type: boolean
+          description: Whether automated backups are enabled
+          default: false
+          example: true
+
+    UpdateTierRequest:
+      type: object
+      description: >
+        Request body for updating a tier. Only non-null fields are applied.
+        Attempting to set name returns IMMUTABLE_FIELD error.
+      properties:
+        description:
+          type: string
+          description: Updated tier description
+          maxLength: 1000
+          example: Updated description
+        instances:
+          type: integer
+          description: Updated number of instances (1-10)
+          minimum: 1
+          maximum: 10
+          example: 3
+        cpu:
+          type: string
+          description: Updated CPU resource quantity
+          example: "1"
+        memory:
+          type: string
+          description: Updated memory resource quantity
+          example: "1Gi"
+        storageSize:
+          type: string
+          description: Updated storage size
+          example: "20Gi"
+        storageClass:
+          type: string
+          description: Updated storage class name
+          maxLength: 255
+          example: fast-ssd
+        pgVersion:
+          type: string
+          description: Updated PostgreSQL version
+          enum:
+            - "15"
+            - "16"
+            - "17"
+          example: "17"
+        poolMode:
+          type: string
+          description: Updated PgBouncer pool mode
+          enum:
+            - transaction
+            - session
+            - statement
+          example: session
+        maxConnections:
+          type: integer
+          description: Updated max connections (10-10000)
+          minimum: 10
+          maximum: 10000
+          example: 200
+        destructionStrategy:
+          type: string
+          description: Updated destruction strategy
+          enum:
+            - freeze
+            - archive
+            - hard_delete
+          example: archive
+        backupEnabled:
+          type: boolean
+          description: Updated backup setting
+          example: false
+
+    TierResponse:
+      type: object
+      description: Single tier response envelope (full details for platform users)
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/Tier"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    TierSummaryResponse:
+      type: object
+      description: Single tier response envelope (summary for product users)
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/TierSummary"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    TierListResponse:
+      type: object
+      description: Tier list response envelope (full details for platform users)
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tier"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ListMeta"
+
+    TierSummaryListResponse:
+      type: object
+      description: Tier list response envelope (summary for product users)
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TierSummary"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ListMeta"
+
     ValidationErrorResponse:
       type: object
       description: Response envelope for validation errors
@@ -1909,5 +2830,7 @@ tags:
     description: Team management (superuser-only)
   - name: users
     description: User management (superuser-only)
+  - name: tiers
+    description: Tier management (platform role for write, platform and product for read)
   - name: databases
     description: Database lifecycle management (platform and product roles)
