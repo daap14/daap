@@ -19,6 +19,9 @@ var ErrNotFound = errors.New("database not found")
 // ErrDuplicateName is returned when a database with the same name already exists.
 var ErrDuplicateName = errors.New("database name already exists")
 
+// ErrInvalidOwnerTeam is returned when owner_team_id references a non-existent team.
+var ErrInvalidOwnerTeam = errors.New("invalid owner team")
+
 // Repository provides CRUD operations on the databases table.
 type Repository interface {
 	Create(ctx context.Context, db *Database) error
@@ -49,13 +52,13 @@ func (r *PostgresRepository) Create(ctx context.Context, db *Database) error {
 	}
 
 	query := `
-		INSERT INTO databases (name, owner_team, purpose, namespace, cluster_name, pooler_name, status)
+		INSERT INTO databases (name, owner_team_id, purpose, namespace, cluster_name, pooler_name, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at`
 
 	err := r.pool.QueryRow(ctx, query,
 		db.Name,
-		db.OwnerTeam,
+		db.OwnerTeamID,
 		db.Purpose,
 		db.Namespace,
 		db.ClusterName,
@@ -64,8 +67,13 @@ func (r *PostgresRepository) Create(ctx context.Context, db *Database) error {
 	).Scan(&db.ID, &db.CreatedAt, &db.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return ErrDuplicateName
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" {
+				return ErrDuplicateName
+			}
+			if pgErr.Code == "23503" {
+				return ErrInvalidOwnerTeam
+			}
 		}
 		return fmt.Errorf("inserting database: %w", err)
 	}
@@ -76,10 +84,13 @@ func (r *PostgresRepository) Create(ctx context.Context, db *Database) error {
 // GetByID retrieves a single non-deleted database by its UUID.
 func (r *PostgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*Database, error) {
 	query := `
-		SELECT id, name, owner_team, purpose, namespace, cluster_name, pooler_name,
-		       status, host, port, secret_name, created_at, updated_at, deleted_at
-		FROM databases
-		WHERE id = $1 AND deleted_at IS NULL`
+		SELECT d.id, d.name, d.owner_team_id, t.name, d.purpose, d.namespace,
+		       d.cluster_name, d.pooler_name, d.status,
+		       d.host, d.port, d.secret_name,
+		       d.created_at, d.updated_at, d.deleted_at
+		FROM databases d
+		LEFT JOIN teams t ON d.owner_team_id = t.id
+		WHERE d.id = $1 AND d.deleted_at IS NULL`
 
 	return r.scanOne(ctx, query, id)
 }
@@ -100,27 +111,27 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*List
 	var args []any
 	argIdx := 1
 
-	conditions = append(conditions, "deleted_at IS NULL")
+	conditions = append(conditions, "d.deleted_at IS NULL")
 
-	if filter.OwnerTeam != nil {
-		conditions = append(conditions, fmt.Sprintf("owner_team = $%d", argIdx))
-		args = append(args, *filter.OwnerTeam)
+	if filter.OwnerTeamID != nil {
+		conditions = append(conditions, fmt.Sprintf("d.owner_team_id = $%d", argIdx))
+		args = append(args, *filter.OwnerTeamID)
 		argIdx++
 	}
 	if filter.Status != nil {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("d.status = $%d", argIdx))
 		args = append(args, *filter.Status)
 		argIdx++
 	}
 	if filter.Name != nil {
-		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("d.name ILIKE $%d", argIdx))
 		args = append(args, "%"+*filter.Name+"%")
 		argIdx++
 	}
 
 	whereClause := "WHERE " + strings.Join(conditions, " AND ")
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM databases %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM databases d %s", whereClause)
 	var total int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
@@ -130,11 +141,14 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*List
 	offset := (filter.Page - 1) * filter.Limit
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, name, owner_team, purpose, namespace, cluster_name, pooler_name,
-		       status, host, port, secret_name, created_at, updated_at, deleted_at
-		FROM databases
+		SELECT d.id, d.name, d.owner_team_id, t.name, d.purpose, d.namespace,
+		       d.cluster_name, d.pooler_name, d.status,
+		       d.host, d.port, d.secret_name,
+		       d.created_at, d.updated_at, d.deleted_at
+		FROM databases d
+		LEFT JOIN teams t ON d.owner_team_id = t.id
 		%s
-		ORDER BY created_at DESC
+		ORDER BY d.created_at DESC
 		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
 
 	args = append(args, filter.Limit, offset)
@@ -149,7 +163,7 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*List
 	for rows.Next() {
 		var db Database
 		err := rows.Scan(
-			&db.ID, &db.Name, &db.OwnerTeam, &db.Purpose, &db.Namespace,
+			&db.ID, &db.Name, &db.OwnerTeamID, &db.OwnerTeamName, &db.Purpose, &db.Namespace,
 			&db.ClusterName, &db.PoolerName, &db.Status,
 			&db.Host, &db.Port, &db.SecretName,
 			&db.CreatedAt, &db.UpdatedAt, &db.DeletedAt,
@@ -175,15 +189,15 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*List
 	}, nil
 }
 
-// Update modifies user-updatable fields (owner_team, purpose) on a non-deleted database.
+// Update modifies user-updatable fields (owner_team_id, purpose) on a non-deleted database.
 func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, fields UpdateFields) (*Database, error) {
 	var setClauses []string
 	var args []any
 	argIdx := 1
 
-	if fields.OwnerTeam != nil {
-		setClauses = append(setClauses, fmt.Sprintf("owner_team = $%d", argIdx))
-		args = append(args, *fields.OwnerTeam)
+	if fields.OwnerTeamID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("owner_team_id = $%d", argIdx))
+		args = append(args, *fields.OwnerTeamID)
 		argIdx++
 	}
 	if fields.Purpose != nil {
@@ -201,14 +215,25 @@ func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, fields Up
 	args = append(args, id)
 
 	query := fmt.Sprintf(`
-		UPDATE databases
+		UPDATE databases d
 		SET %s
-		WHERE id = $%d AND deleted_at IS NULL
-		RETURNING id, name, owner_team, purpose, namespace, cluster_name, pooler_name,
-		          status, host, port, secret_name, created_at, updated_at, deleted_at`,
+		WHERE d.id = $%d AND d.deleted_at IS NULL
+		RETURNING d.id, d.name, d.owner_team_id,
+		          (SELECT t.name FROM teams t WHERE t.id = d.owner_team_id),
+		          d.purpose, d.namespace, d.cluster_name, d.pooler_name,
+		          d.status, d.host, d.port, d.secret_name,
+		          d.created_at, d.updated_at, d.deleted_at`,
 		strings.Join(setClauses, ", "), argIdx)
 
-	return r.scanOne(ctx, query, args...)
+	db, err := r.scanOne(ctx, query, args...)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return nil, ErrInvalidOwnerTeam
+		}
+		return nil, err
+	}
+	return db, nil
 }
 
 // UpdateStatus updates the status and connection details of a database record (used by the reconciler).
@@ -242,11 +267,14 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, id uuid.UUID, su 
 	args = append(args, id)
 
 	query := fmt.Sprintf(`
-		UPDATE databases
+		UPDATE databases d
 		SET %s
-		WHERE id = $%d AND deleted_at IS NULL
-		RETURNING id, name, owner_team, purpose, namespace, cluster_name, pooler_name,
-		          status, host, port, secret_name, created_at, updated_at, deleted_at`,
+		WHERE d.id = $%d AND d.deleted_at IS NULL
+		RETURNING d.id, d.name, d.owner_team_id,
+		          (SELECT t.name FROM teams t WHERE t.id = d.owner_team_id),
+		          d.purpose, d.namespace, d.cluster_name, d.pooler_name,
+		          d.status, d.host, d.port, d.secret_name,
+		          d.created_at, d.updated_at, d.deleted_at`,
 		strings.Join(setClauses, ", "), argIdx)
 
 	return r.scanOne(ctx, query, args...)
@@ -276,7 +304,7 @@ func (r *PostgresRepository) SoftDelete(ctx context.Context, id uuid.UUID) error
 func (r *PostgresRepository) scanOne(ctx context.Context, query string, args ...any) (*Database, error) {
 	var db Database
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
-		&db.ID, &db.Name, &db.OwnerTeam, &db.Purpose, &db.Namespace,
+		&db.ID, &db.Name, &db.OwnerTeamID, &db.OwnerTeamName, &db.Purpose, &db.Namespace,
 		&db.ClusterName, &db.PoolerName, &db.Status,
 		&db.Host, &db.Port, &db.SecretName,
 		&db.CreatedAt, &db.UpdatedAt, &db.DeletedAt,

@@ -19,6 +19,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/k8s/template"
+	"github.com/daap14/daap/internal/team"
 )
 
 // createDatabaseRequest is the request body for POST /databases.
@@ -51,7 +52,7 @@ func toDatabaseResponse(db *database.Database) databaseResponse {
 	resp := databaseResponse{
 		ID:          db.ID.String(),
 		Name:        db.Name,
-		OwnerTeam:   db.OwnerTeam,
+		OwnerTeam:   db.OwnerTeamName,
 		Purpose:     db.Purpose,
 		Namespace:   db.Namespace,
 		ClusterName: db.ClusterName,
@@ -77,25 +78,28 @@ type updateDatabaseRequest struct {
 
 // DatabaseHandler handles database CRUD endpoints.
 type DatabaseHandler struct {
-	repo    database.Repository
-	manager k8s.ResourceManager
-	ns      string
+	repo     database.Repository
+	manager  k8s.ResourceManager
+	teamRepo team.Repository
+	ns       string
 }
 
 // NewDatabaseHandler creates a new DatabaseHandler.
-func NewDatabaseHandler(repo database.Repository, manager k8s.ResourceManager, ns string) *DatabaseHandler {
+func NewDatabaseHandler(repo database.Repository, manager k8s.ResourceManager, teamRepo team.Repository, ns string) *DatabaseHandler {
 	return &DatabaseHandler{
-		repo:    repo,
-		manager: manager,
-		ns:      ns,
+		repo:     repo,
+		manager:  manager,
+		teamRepo: teamRepo,
+		ns:       ns,
 	}
 }
 
 // isProductUser returns true if the identity is a product-role user.
-func isProductUser(r *http.Request) (*string, bool) {
+// Returns the user's team ID instead of team name for ownership comparisons.
+func isProductUser(r *http.Request) (*uuid.UUID, bool) {
 	identity := middleware.GetIdentity(r.Context())
 	if identity != nil && identity.Role != nil && *identity.Role == "product" {
-		return identity.TeamName, true
+		return identity.TeamID, true
 	}
 	return nil, false
 }
@@ -115,10 +119,11 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.OwnerTeam = strings.TrimSpace(req.OwnerTeam)
 
 	// Ownership scoping for product users
-	if teamName, ok := isProductUser(r); ok {
-		if req.OwnerTeam == "" {
-			req.OwnerTeam = *teamName
-		} else if req.OwnerTeam != *teamName {
+	identity := middleware.GetIdentity(r.Context())
+	if identity != nil && identity.Role != nil && *identity.Role == "product" {
+		if req.OwnerTeam == "" && identity.TeamName != nil {
+			req.OwnerTeam = *identity.TeamName
+		} else if identity.TeamName != nil && req.OwnerTeam != *identity.TeamName {
 			response.Err(w, http.StatusForbidden, "FORBIDDEN", "Cannot create databases for another team", requestID)
 			return
 		}
@@ -135,16 +140,29 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	req.Purpose = strings.TrimSpace(req.Purpose)
 
+	// Resolve ownerTeam name to team ID
+	ownerTeam, err := h.teamRepo.GetByName(r.Context(), req.OwnerTeam)
+	if err != nil {
+		if errors.Is(err, team.ErrTeamNotFound) {
+			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Owner team not found", requestID)
+			return
+		}
+		slog.Error("failed to look up owner team", "error", err)
+		response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create database", requestID)
+		return
+	}
+
 	namespace := req.Namespace
 	if namespace == "" {
 		namespace = h.ns
 	}
 
 	db := &database.Database{
-		Name:      req.Name,
-		OwnerTeam: req.OwnerTeam,
-		Purpose:   req.Purpose,
-		Namespace: namespace,
+		Name:          req.Name,
+		OwnerTeamID:   ownerTeam.ID,
+		OwnerTeamName: ownerTeam.Name,
+		Purpose:       req.Purpose,
+		Namespace:     namespace,
 	}
 
 	if err := h.repo.Create(r.Context(), db); err != nil {
@@ -195,10 +213,22 @@ func (h *DatabaseHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ownership scoping: product users only see their own team's databases
-	if teamName, ok := isProductUser(r); ok {
-		filter.OwnerTeam = teamName
+	if teamID, ok := isProductUser(r); ok {
+		filter.OwnerTeamID = teamID
 	} else if v := r.URL.Query().Get("owner_team"); v != "" {
-		filter.OwnerTeam = &v
+		// Resolve team name to ID for filter
+		t, err := h.teamRepo.GetByName(r.Context(), v)
+		if err != nil {
+			if errors.Is(err, team.ErrTeamNotFound) {
+				// No team with this name — return empty results
+				response.SuccessList(w, http.StatusOK, []databaseResponse{}, 0, 1, 20, requestID)
+				return
+			}
+			slog.Error("failed to look up team for filter", "error", err)
+			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list databases", requestID)
+			return
+		}
+		filter.OwnerTeamID = &t.ID
 	}
 
 	if v := r.URL.Query().Get("status"); v != "" {
@@ -262,8 +292,8 @@ func (h *DatabaseHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Product users: return 404 for non-owned databases (no info leakage)
-	if teamName, ok := isProductUser(r); ok {
-		if db.OwnerTeam != *teamName {
+	if teamID, ok := isProductUser(r); ok {
+		if db.OwnerTeamID != *teamID {
 			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
 			return
 		}
@@ -296,7 +326,7 @@ func (h *DatabaseHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Product users: check ownership and cannot change ownerTeam
-	if teamName, ok := isProductUser(r); ok {
+	if teamID, ok := isProductUser(r); ok {
 		if req.OwnerTeam != nil {
 			response.Err(w, http.StatusForbidden, "FORBIDDEN", "Product users cannot change ownerTeam", requestID)
 			return
@@ -312,16 +342,30 @@ func (h *DatabaseHandler) Update(w http.ResponseWriter, r *http.Request) {
 			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update database", requestID)
 			return
 		}
-		if existing.OwnerTeam != *teamName {
+		if existing.OwnerTeamID != *teamID {
 			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
 			return
 		}
 	}
 
-	db, err := h.repo.Update(r.Context(), id, database.UpdateFields{
-		OwnerTeam: req.OwnerTeam,
-		Purpose:   req.Purpose,
-	})
+	// Resolve ownerTeam name to UUID if provided
+	var updateFields database.UpdateFields
+	if req.OwnerTeam != nil {
+		t, err := h.teamRepo.GetByName(r.Context(), *req.OwnerTeam)
+		if err != nil {
+			if errors.Is(err, team.ErrTeamNotFound) {
+				response.Err(w, http.StatusNotFound, "NOT_FOUND", "Owner team not found", requestID)
+				return
+			}
+			slog.Error("failed to look up owner team", "error", err)
+			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update database", requestID)
+			return
+		}
+		updateFields.OwnerTeamID = &t.ID
+	}
+	updateFields.Purpose = req.Purpose
+
+	db, err := h.repo.Update(r.Context(), id, updateFields)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
@@ -358,8 +402,8 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Product users: can only delete own databases
-	if teamName, ok := isProductUser(r); ok {
-		if db.OwnerTeam != *teamName {
+	if teamID, ok := isProductUser(r); ok {
+		if db.OwnerTeamID != *teamID {
 			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
 			return
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/daap14/daap/internal/api/middleware"
 	"github.com/daap14/daap/internal/auth"
 	"github.com/daap14/daap/internal/database"
+	"github.com/daap14/daap/internal/team"
 )
 
 // --- Helpers for identity-aware requests ---
@@ -27,8 +28,7 @@ func makeAuthRequest(method, path string, body []byte, params map[string]string,
 	return req, w
 }
 
-func productIdentity(teamName string) *auth.Identity {
-	teamID := uuid.New()
+func productIdentity(teamName string, teamID uuid.UUID) *auth.Identity {
 	role := "product"
 	return &auth.Identity{
 		UserID:      uuid.New(),
@@ -59,6 +59,7 @@ func platformIdentity() *auth.Identity {
 func TestCreate_ProductUser_AutoSetsOwnerTeam(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	var capturedDB *database.Database
 	repo := &mockRepo{
 		createFn: func(_ context.Context, db *database.Database) error {
@@ -71,35 +72,46 @@ func TestCreate_ProductUser_AutoSetsOwnerTeam(t *testing.T) {
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{
+		getByNameFn: func(_ context.Context, name string) (*team.Team, error) {
+			return &team.Team{ID: myTeamID, Name: name, Role: "product"}, nil
+		},
+	}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name": "mydb",
 	})
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodPost, "/databases", body, nil, identity)
 
 	h.Create(w, req)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
 	require.NotNil(t, capturedDB)
-	assert.Equal(t, "my-team", capturedDB.OwnerTeam)
+	assert.Equal(t, myTeamID, capturedDB.OwnerTeamID)
 }
 
 func TestCreate_ProductUser_MatchingOwnerTeamAllowed(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	repo := &mockRepo{}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{
+		getByNameFn: func(_ context.Context, name string) (*team.Team, error) {
+			return &team.Team{ID: myTeamID, Name: name, Role: "product"}, nil
+		},
+	}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "my-team",
 	})
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodPost, "/databases", body, nil, identity)
 
 	h.Create(w, req)
@@ -110,16 +122,18 @@ func TestCreate_ProductUser_MatchingOwnerTeamAllowed(t *testing.T) {
 func TestCreate_ProductUser_MismatchedOwnerTeamForbidden(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	repo := &mockRepo{}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "other-team",
 	})
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodPost, "/databases", body, nil, identity)
 
 	h.Create(w, req)
@@ -136,7 +150,8 @@ func TestCreate_PlatformUser_AnyOwnerTeamAllowed(t *testing.T) {
 
 	repo := &mockRepo{}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -156,6 +171,7 @@ func TestCreate_PlatformUser_AnyOwnerTeamAllowed(t *testing.T) {
 func TestList_ProductUser_AutoFiltersOwnerTeam(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	var capturedFilter database.ListFilter
 	repo := &mockRepo{
 		listFn: func(_ context.Context, filter database.ListFilter) (*database.ListResult, error) {
@@ -169,16 +185,17 @@ func TestList_ProductUser_AutoFiltersOwnerTeam(t *testing.T) {
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodGet, "/databases", nil, nil, identity)
 
 	h.List(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	require.NotNil(t, capturedFilter.OwnerTeam)
-	assert.Equal(t, "my-team", *capturedFilter.OwnerTeam)
+	require.NotNil(t, capturedFilter.OwnerTeamID)
+	assert.Equal(t, myTeamID, *capturedFilter.OwnerTeamID)
 }
 
 func TestList_PlatformUser_SeesAll(t *testing.T) {
@@ -197,7 +214,8 @@ func TestList_PlatformUser_SeesAll(t *testing.T) {
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	identity := platformIdentity()
 	req, w := makeAuthRequest(http.MethodGet, "/databases", nil, nil, identity)
@@ -205,7 +223,7 @@ func TestList_PlatformUser_SeesAll(t *testing.T) {
 	h.List(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Nil(t, capturedFilter.OwnerTeam)
+	assert.Nil(t, capturedFilter.OwnerTeamID)
 }
 
 // ===== GET /databases/{id} — Ownership Scoping =====
@@ -213,18 +231,21 @@ func TestList_PlatformUser_SeesAll(t *testing.T) {
 func TestGetByID_ProductUser_OwnDatabase(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "ready")
-			db.OwnerTeam = "my-team"
+			db.OwnerTeamID = myTeamID
+			db.OwnerTeamName = "my-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodGet, "/databases/"+id.String(), nil, map[string]string{"id": id.String()}, identity)
 
 	h.GetByID(w, req)
@@ -235,18 +256,22 @@ func TestGetByID_ProductUser_OwnDatabase(t *testing.T) {
 func TestGetByID_ProductUser_OtherTeamReturns404(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
+	otherTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "ready")
-			db.OwnerTeam = "other-team"
+			db.OwnerTeamID = otherTeamID
+			db.OwnerTeamName = "other-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodGet, "/databases/"+id.String(), nil, map[string]string{"id": id.String()}, identity)
 
 	h.GetByID(w, req)
@@ -265,12 +290,13 @@ func TestGetByID_PlatformUser_SeesAll(t *testing.T) {
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "ready")
-			db.OwnerTeam = "any-team"
+			db.OwnerTeamName = "any-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	identity := platformIdentity()
 	req, w := makeAuthRequest(http.MethodGet, "/databases/"+id.String(), nil, map[string]string{"id": id.String()}, identity)
@@ -285,16 +311,18 @@ func TestGetByID_PlatformUser_SeesAll(t *testing.T) {
 func TestUpdate_ProductUser_CannotChangeOwnerTeam(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"ownerTeam": "new-team",
 	})
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodPatch, "/databases/"+id.String(), body, map[string]string{"id": id.String()}, identity)
 
 	h.Update(w, req)
@@ -309,16 +337,19 @@ func TestUpdate_ProductUser_CannotChangeOwnerTeam(t *testing.T) {
 func TestUpdate_ProductUser_OwnDatabaseAllowed(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			db.OwnerTeam = "my-team"
+			db.OwnerTeamID = myTeamID
+			db.OwnerTeamName = "my-team"
 			return db, nil
 		},
 		updateFn: func(_ context.Context, _ uuid.UUID, fields database.UpdateFields) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			db.OwnerTeam = "my-team"
+			db.OwnerTeamID = myTeamID
+			db.OwnerTeamName = "my-team"
 			if fields.Purpose != nil {
 				db.Purpose = *fields.Purpose
 			}
@@ -326,13 +357,14 @@ func TestUpdate_ProductUser_OwnDatabaseAllowed(t *testing.T) {
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"purpose": "updated",
 	})
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodPatch, "/databases/"+id.String(), body, map[string]string{"id": id.String()}, identity)
 
 	h.Update(w, req)
@@ -343,22 +375,26 @@ func TestUpdate_ProductUser_OwnDatabaseAllowed(t *testing.T) {
 func TestUpdate_ProductUser_OtherTeamReturns404(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
+	otherTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			db.OwnerTeam = "other-team"
+			db.OwnerTeamID = otherTeamID
+			db.OwnerTeamName = "other-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"purpose": "updated",
 	})
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodPatch, "/databases/"+id.String(), body, map[string]string{"id": id.String()}, identity)
 
 	h.Update(w, req)
@@ -369,18 +405,25 @@ func TestUpdate_ProductUser_OtherTeamReturns404(t *testing.T) {
 func TestUpdate_PlatformUser_CanChangeOwnerTeam(t *testing.T) {
 	t.Parallel()
 
+	newTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		updateFn: func(_ context.Context, _ uuid.UUID, fields database.UpdateFields) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			if fields.OwnerTeam != nil {
-				db.OwnerTeam = *fields.OwnerTeam
+			if fields.OwnerTeamID != nil {
+				db.OwnerTeamID = *fields.OwnerTeamID
+				db.OwnerTeamName = "new-team"
 			}
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{
+		getByNameFn: func(_ context.Context, name string) (*team.Team, error) {
+			return &team.Team{ID: newTeamID, Name: name, Role: "platform"}, nil
+		},
+	}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"ownerTeam": "new-team",
@@ -399,18 +442,21 @@ func TestUpdate_PlatformUser_CanChangeOwnerTeam(t *testing.T) {
 func TestDelete_ProductUser_OwnDatabaseAllowed(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			db.OwnerTeam = "my-team"
+			db.OwnerTeamID = myTeamID
+			db.OwnerTeamName = "my-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodDelete, "/databases/"+id.String(), nil, map[string]string{"id": id.String()}, identity)
 
 	h.Delete(w, req)
@@ -421,18 +467,22 @@ func TestDelete_ProductUser_OwnDatabaseAllowed(t *testing.T) {
 func TestDelete_ProductUser_OtherTeamReturns404(t *testing.T) {
 	t.Parallel()
 
+	myTeamID := uuid.New()
+	otherTeamID := uuid.New()
 	id := uuid.New()
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			db.OwnerTeam = "other-team"
+			db.OwnerTeamID = otherTeamID
+			db.OwnerTeamName = "other-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
-	identity := productIdentity("my-team")
+	identity := productIdentity("my-team", myTeamID)
 	req, w := makeAuthRequest(http.MethodDelete, "/databases/"+id.String(), nil, map[string]string{"id": id.String()}, identity)
 
 	h.Delete(w, req)
@@ -451,12 +501,13 @@ func TestDelete_PlatformUser_DeletesAnyTeam(t *testing.T) {
 	repo := &mockRepo{
 		getByIDFn: func(_ context.Context, _ uuid.UUID) (*database.Database, error) {
 			db := sampleDB(id, "provisioning")
-			db.OwnerTeam = "any-team"
+			db.OwnerTeamName = "any-team"
 			return db, nil
 		},
 	}
 	mgr := &mockManager{}
-	h := newTestHandler(repo, mgr)
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
 
 	identity := platformIdentity()
 	req, w := makeAuthRequest(http.MethodDelete, "/databases/"+id.String(), nil, map[string]string{"id": id.String()}, identity)

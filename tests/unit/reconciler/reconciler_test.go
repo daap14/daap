@@ -140,16 +140,17 @@ func (m *mockManager) GetSecret(ctx context.Context, namespace, name string) (ma
 
 func provisioningDB(id uuid.UUID, name string) database.Database {
 	return database.Database{
-		ID:          id,
-		Name:        name,
-		OwnerTeam:   "platform",
-		Purpose:     "testing",
-		Namespace:   "default",
-		ClusterName: "daap-" + name,
-		PoolerName:  "daap-" + name + "-pooler",
-		Status:      "provisioning",
-		CreatedAt:   time.Now().UTC(),
-		UpdatedAt:   time.Now().UTC(),
+		ID:            id,
+		Name:          name,
+		OwnerTeamID:   uuid.New(),
+		OwnerTeamName: "platform",
+		Purpose:       "testing",
+		Namespace:     "default",
+		ClusterName:   "daap-" + name,
+		PoolerName:    "daap-" + name + "-pooler",
+		Status:        "provisioning",
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 }
 

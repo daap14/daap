@@ -20,6 +20,7 @@ var ErrTeamHasUsers = errors.New("team has users")
 type Repository interface {
 	Create(ctx context.Context, team *Team) error
 	GetByID(ctx context.Context, id uuid.UUID) (*Team, error)
+	GetByName(ctx context.Context, name string) (*Team, error)
 	List(ctx context.Context) ([]Team, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }

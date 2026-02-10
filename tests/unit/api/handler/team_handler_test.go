@@ -18,10 +18,11 @@ import (
 // --- Mock Team Repository ---
 
 type mockTeamRepo struct {
-	createFn  func(ctx context.Context, t *team.Team) error
-	getByIDFn func(ctx context.Context, id uuid.UUID) (*team.Team, error)
-	listFn    func(ctx context.Context) ([]team.Team, error)
-	deleteFn  func(ctx context.Context, id uuid.UUID) error
+	createFn    func(ctx context.Context, t *team.Team) error
+	getByIDFn   func(ctx context.Context, id uuid.UUID) (*team.Team, error)
+	getByNameFn func(ctx context.Context, name string) (*team.Team, error)
+	listFn      func(ctx context.Context) ([]team.Team, error)
+	deleteFn    func(ctx context.Context, id uuid.UUID) error
 }
 
 func (m *mockTeamRepo) Create(ctx context.Context, t *team.Team) error {
@@ -37,6 +38,13 @@ func (m *mockTeamRepo) Create(ctx context.Context, t *team.Team) error {
 func (m *mockTeamRepo) GetByID(ctx context.Context, id uuid.UUID) (*team.Team, error) {
 	if m.getByIDFn != nil {
 		return m.getByIDFn(ctx, id)
+	}
+	return nil, team.ErrTeamNotFound
+}
+
+func (m *mockTeamRepo) GetByName(ctx context.Context, name string) (*team.Team, error) {
+	if m.getByNameFn != nil {
+		return m.getByNameFn(ctx, name)
 	}
 	return nil, team.ErrTeamNotFound
 }

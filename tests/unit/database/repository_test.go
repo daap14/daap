@@ -16,6 +16,14 @@ import (
 
 const defaultTestDatabaseURL = "postgres://daap:daap@127.0.0.1:5433/daap_test?sslmode=disable"
 
+// testTeamIDs are populated by setupRepo by inserting teams into the database.
+var (
+	platformTeamID uuid.UUID
+	backendTeamID  uuid.UUID
+	frontendTeamID uuid.UUID
+	infraTeamID    uuid.UUID
+)
+
 func setupRepo(t *testing.T) (database.Repository, func()) {
 	t.Helper()
 
@@ -35,9 +43,31 @@ func setupRepo(t *testing.T) (database.Repository, func()) {
 		t.Skipf("skipping: cannot ping test database: %v", err)
 	}
 
-	// Truncate the table for a clean slate
+	// Clean tables for a fresh slate
 	_, err = pool.Exec(ctx, "TRUNCATE TABLE databases CASCADE")
 	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
+	require.NoError(t, err)
+
+	// Insert test teams
+	for _, tc := range []struct {
+		name string
+		role string
+		id   *uuid.UUID
+	}{
+		{"platform", "platform", &platformTeamID},
+		{"backend", "product", &backendTeamID},
+		{"frontend", "product", &frontendTeamID},
+		{"infra", "platform", &infraTeamID},
+	} {
+		var id uuid.UUID
+		err := pool.QueryRow(ctx,
+			"INSERT INTO teams (name, role) VALUES ($1, $2) RETURNING id",
+			tc.name, tc.role,
+		).Scan(&id)
+		require.NoError(t, err)
+		*tc.id = id
+	}
 
 	repo := database.NewRepository(pool)
 	cleanup := func() {
@@ -46,16 +76,17 @@ func setupRepo(t *testing.T) (database.Repository, func()) {
 	return repo, cleanup
 }
 
-func newTestDB(name, ownerTeam, namespace string) *database.Database {
+func newTestDB(name string, ownerTeamID uuid.UUID, namespace string) *database.Database {
 	return &database.Database{
-		Name:      name,
-		OwnerTeam: ownerTeam,
-		Purpose:   "test purpose",
-		Namespace: namespace,
+		Name:        name,
+		OwnerTeamID: ownerTeamID,
+		Purpose:     "test purpose",
+		Namespace:   namespace,
 	}
 }
 
-func strPtr(s string) *string { return &s }
+func uuidPtr(id uuid.UUID) *uuid.UUID { return &id }
+func strPtr(s string) *string         { return &s }
 
 // --- Create Tests ---
 
@@ -64,7 +95,7 @@ func TestCreate_Success(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("testdb", "platform", "default")
+	db := newTestDB("testdb", platformTeamID, "default")
 
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
@@ -82,11 +113,11 @@ func TestCreate_DuplicateName(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db1 := newTestDB("dupdb", "platform", "default")
+	db1 := newTestDB("dupdb", platformTeamID, "default")
 	err := repo.Create(ctx, db1)
 	require.NoError(t, err)
 
-	db2 := newTestDB("dupdb", "other-team", "default")
+	db2 := newTestDB("dupdb", backendTeamID, "default")
 	err = repo.Create(ctx, db2)
 	assert.ErrorIs(t, err, database.ErrDuplicateName, "duplicate active name should return ErrDuplicateName")
 }
@@ -96,7 +127,7 @@ func TestCreate_SetsClusterAndPoolerNames(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("my-app", "backend", "staging")
+	db := newTestDB("my-app", backendTeamID, "staging")
 
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
@@ -112,7 +143,7 @@ func TestGetByID_Success(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("gettest", "platform", "default")
+	db := newTestDB("gettest", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -121,7 +152,8 @@ func TestGetByID_Success(t *testing.T) {
 
 	assert.Equal(t, db.ID, found.ID)
 	assert.Equal(t, "gettest", found.Name)
-	assert.Equal(t, "platform", found.OwnerTeam)
+	assert.Equal(t, platformTeamID, found.OwnerTeamID)
+	assert.Equal(t, "platform", found.OwnerTeamName)
 	assert.Equal(t, "test purpose", found.Purpose)
 	assert.Equal(t, "default", found.Namespace)
 	assert.Equal(t, "provisioning", found.Status)
@@ -143,7 +175,7 @@ func TestGetByID_ExcludesSoftDeleted(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("deleted-db", "platform", "default")
+	db := newTestDB("deleted-db", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -176,7 +208,7 @@ func TestList_ReturnsAllRecords(t *testing.T) {
 
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		db := newTestDB("listdb-"+string(rune('a'+i)), "platform", "default")
+		db := newTestDB("listdb-"+string(rune('a'+i)), platformTeamID, "default")
 		err := repo.Create(ctx, db)
 		require.NoError(t, err)
 	}
@@ -193,18 +225,16 @@ func TestList_FilterByOwnerTeam(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	for _, team := range []string{"backend", "backend", "frontend"} {
-		db := newTestDB("filter-"+team+"-"+uuid.New().String()[:8], team, "default")
-		err := repo.Create(ctx, db)
-		require.NoError(t, err)
-	}
+	require.NoError(t, repo.Create(ctx, newTestDB("filter-backend-1", backendTeamID, "default")))
+	require.NoError(t, repo.Create(ctx, newTestDB("filter-backend-2", backendTeamID, "default")))
+	require.NoError(t, repo.Create(ctx, newTestDB("filter-frontend-1", frontendTeamID, "default")))
 
-	result, err := repo.List(ctx, database.ListFilter{OwnerTeam: strPtr("backend")})
+	result, err := repo.List(ctx, database.ListFilter{OwnerTeamID: uuidPtr(backendTeamID)})
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, result.Total)
 	for _, db := range result.Databases {
-		assert.Equal(t, "backend", db.OwnerTeam)
+		assert.Equal(t, backendTeamID, db.OwnerTeamID)
 	}
 }
 
@@ -213,11 +243,11 @@ func TestList_FilterByStatus(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db1 := newTestDB("status-a", "platform", "default")
+	db1 := newTestDB("status-a", platformTeamID, "default")
 	err := repo.Create(ctx, db1)
 	require.NoError(t, err)
 
-	db2 := newTestDB("status-b", "platform", "default")
+	db2 := newTestDB("status-b", platformTeamID, "default")
 	err = repo.Create(ctx, db2)
 	require.NoError(t, err)
 
@@ -237,7 +267,7 @@ func TestList_FilterByName(t *testing.T) {
 
 	ctx := context.Background()
 	for _, name := range []string{"analytics-prod", "analytics-staging", "orders-prod"} {
-		db := newTestDB(name, "platform", "default")
+		db := newTestDB(name, platformTeamID, "default")
 		err := repo.Create(ctx, db)
 		require.NoError(t, err)
 	}
@@ -257,7 +287,7 @@ func TestList_Pagination(t *testing.T) {
 
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		db := newTestDB("page-"+string(rune('a'+i)), "platform", "default")
+		db := newTestDB("page-"+string(rune('a'+i)), platformTeamID, "default")
 		err := repo.Create(ctx, db)
 		require.NoError(t, err)
 		// Small sleep to ensure distinct created_at for ordering
@@ -301,11 +331,11 @@ func TestList_ExcludesSoftDeleted(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db1 := newTestDB("active-db", "platform", "default")
+	db1 := newTestDB("active-db", platformTeamID, "default")
 	err := repo.Create(ctx, db1)
 	require.NoError(t, err)
 
-	db2 := newTestDB("deleted-db", "platform", "default")
+	db2 := newTestDB("deleted-db", platformTeamID, "default")
 	err = repo.Create(ctx, db2)
 	require.NoError(t, err)
 
@@ -355,16 +385,17 @@ func TestUpdate_OwnerTeam(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("update-owner", "platform", "default")
+	db := newTestDB("update-owner", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
 	updated, err := repo.Update(ctx, db.ID, database.UpdateFields{
-		OwnerTeam: strPtr("backend"),
+		OwnerTeamID: uuidPtr(backendTeamID),
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "backend", updated.OwnerTeam)
+	assert.Equal(t, backendTeamID, updated.OwnerTeamID)
+	assert.Equal(t, "backend", updated.OwnerTeamName)
 	assert.Equal(t, "test purpose", updated.Purpose) // unchanged
 	assert.False(t, updated.UpdatedAt.IsZero(), "updated_at should be set")
 }
@@ -374,7 +405,7 @@ func TestUpdate_Purpose(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("update-purpose", "platform", "default")
+	db := newTestDB("update-purpose", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -384,7 +415,7 @@ func TestUpdate_Purpose(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "new purpose", updated.Purpose)
-	assert.Equal(t, "platform", updated.OwnerTeam) // unchanged
+	assert.Equal(t, platformTeamID, updated.OwnerTeamID) // unchanged
 }
 
 func TestUpdate_BothFields(t *testing.T) {
@@ -392,17 +423,18 @@ func TestUpdate_BothFields(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("update-both", "platform", "default")
+	db := newTestDB("update-both", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
 	updated, err := repo.Update(ctx, db.ID, database.UpdateFields{
-		OwnerTeam: strPtr("infra"),
-		Purpose:   strPtr("analytics database"),
+		OwnerTeamID: uuidPtr(infraTeamID),
+		Purpose:     strPtr("analytics database"),
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "infra", updated.OwnerTeam)
+	assert.Equal(t, infraTeamID, updated.OwnerTeamID)
+	assert.Equal(t, "infra", updated.OwnerTeamName)
 	assert.Equal(t, "analytics database", updated.Purpose)
 }
 
@@ -411,7 +443,7 @@ func TestUpdate_NoFields(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("update-noop", "platform", "default")
+	db := newTestDB("update-noop", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -420,7 +452,7 @@ func TestUpdate_NoFields(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, db.ID, updated.ID)
-	assert.Equal(t, "platform", updated.OwnerTeam)
+	assert.Equal(t, platformTeamID, updated.OwnerTeamID)
 }
 
 func TestUpdate_NotFound(t *testing.T) {
@@ -429,7 +461,7 @@ func TestUpdate_NotFound(t *testing.T) {
 
 	ctx := context.Background()
 	_, err := repo.Update(ctx, uuid.New(), database.UpdateFields{
-		OwnerTeam: strPtr("team"),
+		OwnerTeamID: uuidPtr(backendTeamID),
 	})
 
 	assert.ErrorIs(t, err, database.ErrNotFound)
@@ -440,7 +472,7 @@ func TestUpdate_SoftDeletedRecord(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("update-deleted", "platform", "default")
+	db := newTestDB("update-deleted", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -448,7 +480,7 @@ func TestUpdate_SoftDeletedRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = repo.Update(ctx, db.ID, database.UpdateFields{
-		OwnerTeam: strPtr("team"),
+		OwnerTeamID: uuidPtr(backendTeamID),
 	})
 	assert.ErrorIs(t, err, database.ErrNotFound)
 }
@@ -460,7 +492,7 @@ func TestSoftDelete_Success(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("delete-me", "platform", "default")
+	db := newTestDB("delete-me", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -486,7 +518,7 @@ func TestSoftDelete_AlreadyDeleted(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db := newTestDB("double-delete", "platform", "default")
+	db := newTestDB("double-delete", platformTeamID, "default")
 	err := repo.Create(ctx, db)
 	require.NoError(t, err)
 
@@ -503,7 +535,7 @@ func TestSoftDelete_AllowsNameReuse(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	db1 := newTestDB("reusable-name", "platform", "default")
+	db1 := newTestDB("reusable-name", platformTeamID, "default")
 	err := repo.Create(ctx, db1)
 	require.NoError(t, err)
 
@@ -511,7 +543,7 @@ func TestSoftDelete_AllowsNameReuse(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to create a new record with the same name
-	db2 := newTestDB("reusable-name", "platform", "default")
+	db2 := newTestDB("reusable-name", platformTeamID, "default")
 	err = repo.Create(ctx, db2)
 	assert.NoError(t, err, "should allow name reuse after soft delete")
 	assert.NotEqual(t, db1.ID, db2.ID)

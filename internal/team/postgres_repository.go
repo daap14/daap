@@ -59,6 +59,25 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*Team, 
 	return &t, nil
 }
 
+// GetByName retrieves a single team by its name.
+func (r *PostgresRepository) GetByName(ctx context.Context, name string) (*Team, error) {
+	query := `
+		SELECT id, name, role, created_at, updated_at
+		FROM teams
+		WHERE name = $1`
+
+	var t Team
+	err := r.pool.QueryRow(ctx, query, name).Scan(&t.ID, &t.Name, &t.Role, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTeamNotFound
+		}
+		return nil, fmt.Errorf("querying team by name: %w", err)
+	}
+
+	return &t, nil
+}
+
 // List retrieves all teams ordered by creation time.
 func (r *PostgresRepository) List(ctx context.Context) ([]Team, error) {
 	query := `
