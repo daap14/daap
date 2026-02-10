@@ -11,6 +11,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // RouterDeps holds all dependencies needed by the router.
@@ -24,6 +25,7 @@ type RouterDeps struct {
 	OpenAPISpec []byte
 	AuthService *auth.Service
 	TeamRepo    team.Repository
+	TierRepo    tier.Repository
 	UserRepo    auth.UserRepository
 }
 
@@ -69,7 +71,7 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 
 			// Business routes (platform + product)
 			if deps.Repo != nil && deps.K8sManager != nil {
-				dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.TeamRepo, deps.Namespace)
+				dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.TeamRepo, deps.TierRepo, deps.Namespace)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireRole("platform", "product"))
 					r.Post("/databases", dbHandler.Create)
@@ -83,7 +85,7 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 	} else {
 		// Fallback: no auth service — register database routes without auth (graceful degradation)
 		if deps.Repo != nil && deps.K8sManager != nil {
-			dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.TeamRepo, deps.Namespace)
+			dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.TeamRepo, deps.TierRepo, deps.Namespace)
 			r.Route("/databases", func(r chi.Router) {
 				r.Post("/", dbHandler.Create)
 				r.Get("/", dbHandler.List)

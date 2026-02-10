@@ -21,6 +21,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // --- Mock Repository ---
@@ -184,10 +185,74 @@ func (m *mockDBTeamRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// --- Mock Tier Repository ---
+
+type mockTierRepo struct {
+	getByNameFn func(ctx context.Context, name string) (*tier.Tier, error)
+	getByIDFn   func(ctx context.Context, id uuid.UUID) (*tier.Tier, error)
+	createFn    func(ctx context.Context, t *tier.Tier) error
+	listFn      func(ctx context.Context) ([]tier.Tier, error)
+	updateFn    func(ctx context.Context, id uuid.UUID, fields tier.UpdateFields) (*tier.Tier, error)
+	deleteFn    func(ctx context.Context, id uuid.UUID) error
+}
+
+func (m *mockTierRepo) Create(ctx context.Context, t *tier.Tier) error {
+	if m.createFn != nil {
+		return m.createFn(ctx, t)
+	}
+	return nil
+}
+
+func (m *mockTierRepo) GetByID(ctx context.Context, id uuid.UUID) (*tier.Tier, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return nil, tier.ErrTierNotFound
+}
+
+func (m *mockTierRepo) GetByName(ctx context.Context, name string) (*tier.Tier, error) {
+	if m.getByNameFn != nil {
+		return m.getByNameFn(ctx, name)
+	}
+	return &tier.Tier{
+		ID:             uuid.New(),
+		Name:           name,
+		Instances:      1,
+		CPU:            "500m",
+		Memory:         "512Mi",
+		StorageSize:    "1Gi",
+		PGVersion:      "16",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
+	}, nil
+}
+
+func (m *mockTierRepo) List(ctx context.Context) ([]tier.Tier, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx)
+	}
+	return []tier.Tier{}, nil
+}
+
+func (m *mockTierRepo) Update(ctx context.Context, id uuid.UUID, fields tier.UpdateFields) (*tier.Tier, error) {
+	if m.updateFn != nil {
+		return m.updateFn(ctx, id, fields)
+	}
+	return nil, tier.ErrTierNotFound
+}
+
+func (m *mockTierRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	if m.deleteFn != nil {
+		return m.deleteFn(ctx, id)
+	}
+	return nil
+}
+
 // --- Helpers ---
 
 func newTestHandler(repo database.Repository, mgr k8s.ResourceManager, teamRepo team.Repository) *handler.DatabaseHandler {
-	return handler.NewDatabaseHandler(repo, mgr, teamRepo, "default")
+	tierRepo := &mockTierRepo{}
+	return handler.NewDatabaseHandler(repo, mgr, teamRepo, tierRepo, "default")
 }
 
 func makeChiRequest(method, path string, body []byte, routePattern string, params map[string]string) (*http.Request, *httptest.ResponseRecorder) {

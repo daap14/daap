@@ -20,6 +20,7 @@ import (
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/k8s/template"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // createDatabaseRequest is the request body for POST /databases.
@@ -36,6 +37,7 @@ type databaseResponse struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	OwnerTeam   string  `json:"ownerTeam"`
+	Tier        string  `json:"tier,omitempty"`
 	Purpose     string  `json:"purpose"`
 	Namespace   string  `json:"namespace"`
 	ClusterName string  `json:"clusterName"`
@@ -54,6 +56,7 @@ func toDatabaseResponse(db *database.Database) databaseResponse {
 		ID:          db.ID.String(),
 		Name:        db.Name,
 		OwnerTeam:   db.OwnerTeamName,
+		Tier:        db.TierName,
 		Purpose:     db.Purpose,
 		Namespace:   db.Namespace,
 		ClusterName: db.ClusterName,
@@ -82,15 +85,17 @@ type DatabaseHandler struct {
 	repo     database.Repository
 	manager  k8s.ResourceManager
 	teamRepo team.Repository
+	tierRepo tier.Repository
 	ns       string
 }
 
 // NewDatabaseHandler creates a new DatabaseHandler.
-func NewDatabaseHandler(repo database.Repository, manager k8s.ResourceManager, teamRepo team.Repository, ns string) *DatabaseHandler {
+func NewDatabaseHandler(repo database.Repository, manager k8s.ResourceManager, teamRepo team.Repository, tierRepo tier.Repository, ns string) *DatabaseHandler {
 	return &DatabaseHandler{
 		repo:     repo,
 		manager:  manager,
 		teamRepo: teamRepo,
+		tierRepo: tierRepo,
 		ns:       ns,
 	}
 }
@@ -154,6 +159,19 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve tier by name
+	req.Tier = strings.TrimSpace(req.Tier)
+	resolvedTier, err := h.tierRepo.GetByName(r.Context(), req.Tier)
+	if err != nil {
+		if errors.Is(err, tier.ErrTierNotFound) {
+			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Tier not found", requestID)
+			return
+		}
+		slog.Error("failed to look up tier", "error", err)
+		response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create database", requestID)
+		return
+	}
+
 	namespace := req.Namespace
 	if namespace == "" {
 		namespace = h.ns
@@ -163,6 +181,8 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name:          req.Name,
 		OwnerTeamID:   ownerTeam.ID,
 		OwnerTeamName: ownerTeam.Name,
+		TierID:        &resolvedTier.ID,
+		TierName:      resolvedTier.Name,
 		Purpose:       req.Purpose,
 		Namespace:     namespace,
 	}
@@ -177,15 +197,15 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO(v0.5): replace hardcoded defaults with tier params once handler accepts tier
 	cluster := template.BuildCluster(template.ClusterParams{
-		Name:        db.Name,
-		Namespace:   db.Namespace,
-		Instances:   1,
-		CPU:         "500m",
-		Memory:      "512Mi",
-		StorageSize: "1Gi",
-		PGVersion:   "16",
+		Name:         db.Name,
+		Namespace:    db.Namespace,
+		Instances:    resolvedTier.Instances,
+		CPU:          resolvedTier.CPU,
+		Memory:       resolvedTier.Memory,
+		StorageSize:  resolvedTier.StorageSize,
+		StorageClass: resolvedTier.StorageClass,
+		PGVersion:    resolvedTier.PGVersion,
 	})
 
 	if err := h.manager.ApplyCluster(r.Context(), cluster); err != nil {
@@ -195,13 +215,12 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO(v0.5): replace hardcoded defaults with tier params once handler accepts tier
 	pooler := template.BuildPooler(template.PoolerParams{
 		Name:           db.Name,
 		Namespace:      db.Namespace,
 		ClusterName:    db.ClusterName,
-		PoolMode:       "transaction",
-		MaxConnections: 100,
+		PoolMode:       resolvedTier.PoolMode,
+		MaxConnections: resolvedTier.MaxConnections,
 	})
 
 	if err := h.manager.ApplyPooler(r.Context(), pooler); err != nil {
