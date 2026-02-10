@@ -15,6 +15,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // ownerTestEnv holds all the keys and IDs needed for ownership tests.
@@ -38,6 +39,8 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 	// Truncate for clean slate
 	_, err := testPool.Exec(ctx, "TRUNCATE TABLE databases CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -46,8 +49,27 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 	repo := database.NewRepository(testPool)
 	mgr := &dbMockManager{}
 	teamRepo := team.NewRepository(testPool)
+	tierRepo := tier.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4)
+
+	// Create a default tier for database tests
+	defaultTier := &tier.Tier{
+		Name:                "standard",
+		Description:         "Standard tier for tests",
+		Instances:           1,
+		CPU:                 "500m",
+		Memory:              "512Mi",
+		StorageSize:         "1Gi",
+		StorageClass:        "",
+		PGVersion:           "16",
+		PoolMode:            "transaction",
+		MaxConnections:      100,
+		DestructionStrategy: "hard_delete",
+		BackupEnabled:       false,
+	}
+	err = tierRepo.Create(ctx, defaultTier)
+	require.NoError(t, err)
 
 	// Bootstrap superuser
 	superKey, err := authService.BootstrapSuperuser(ctx)
@@ -87,6 +109,7 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 		Namespace:   "default",
 		AuthService: authService,
 		TeamRepo:    teamRepo,
+		TierRepo:    tierRepo,
 		UserRepo:    userRepo,
 	})
 
@@ -125,6 +148,7 @@ func TestProductUser_CreateDB_AutoSetsOwnerTeam(t *testing.T) {
 	// Product user creates DB without specifying ownerTeam -> auto-set to team name
 	body := map[string]interface{}{
 		"name":    "alpha-db-auto",
+		"tier":    "standard",
 		"purpose": "test auto owner",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.productAKey)
@@ -140,6 +164,7 @@ func TestProductUser_CreateDB_ExplicitOwnTeam(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "alpha-db-explicit",
 		"ownerTeam": "alpha",
+		"tier":      "standard",
 		"purpose":   "test explicit owner",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.productAKey)
@@ -155,6 +180,7 @@ func TestProductUser_CreateDB_OtherTeam_Forbidden(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "alpha-db-sneaky",
 		"ownerTeam": "beta",
+		"tier":      "standard",
 		"purpose":   "trying to create for another team",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.productAKey)
@@ -175,6 +201,7 @@ func TestProductUser_ListDB_SeesOnlyOwn(t *testing.T) {
 		body := map[string]interface{}{
 			"name":      name,
 			"ownerTeam": ownerTeam,
+			"tier":      "standard",
 		}
 		resp, _ := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -208,6 +235,7 @@ func TestProductUser_GetByID_CrossTeam_NotFound(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "beta-only-db",
 		"ownerTeam": "beta",
+		"tier":      "standard",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -232,6 +260,7 @@ func TestProductUser_Delete_CrossTeam_NotFound(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "alpha-delete-test",
 		"ownerTeam": "alpha",
+		"tier":      "standard",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -252,6 +281,7 @@ func TestProductUser_Update_CannotChangeOwnerTeam(t *testing.T) {
 	// Alpha creates a DB
 	body := map[string]interface{}{
 		"name":    "alpha-update-test",
+		"tier":    "standard",
 		"purpose": "original",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.productAKey)
@@ -284,6 +314,7 @@ func TestProductUser_Update_CrossTeam_NotFound(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "beta-update-test",
 		"ownerTeam": "beta",
+		"tier":      "standard",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -313,6 +344,7 @@ func TestPlatformUser_SeesAllDatabases(t *testing.T) {
 		body := map[string]interface{}{
 			"name":      info.name,
 			"ownerTeam": info.owner,
+			"tier":      "standard",
 		}
 		resp, _ := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -337,6 +369,7 @@ func TestPlatformUser_CanFilterByTeam(t *testing.T) {
 		body := map[string]interface{}{
 			"name":      info.name,
 			"ownerTeam": info.owner,
+			"tier":      "standard",
 		}
 		resp, _ := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -356,6 +389,7 @@ func TestPlatformUser_CanChangeOwnerTeam(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "transfer-db",
 		"ownerTeam": "alpha",
+		"tier":      "standard",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.platformKey)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)

@@ -14,6 +14,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // authTestEnv holds the test server and auth-related objects for auth integration tests.
@@ -37,6 +38,8 @@ func setupAuthTestServer(t *testing.T) *authTestEnv {
 	// Truncate for clean slate (order matters due to FK constraints)
 	_, err := testPool.Exec(ctx, "TRUNCATE TABLE databases CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -45,6 +48,7 @@ func setupAuthTestServer(t *testing.T) *authTestEnv {
 	repo := database.NewRepository(testPool)
 	mgr := &dbMockManager{}
 	teamRepo := team.NewRepository(testPool)
+	tierRepo := tier.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4)
 
@@ -67,6 +71,7 @@ func setupAuthTestServer(t *testing.T) *authTestEnv {
 		Namespace:   "default",
 		AuthService: authService,
 		TeamRepo:    teamRepo,
+		TierRepo:    tierRepo,
 		UserRepo:    userRepo,
 	})
 

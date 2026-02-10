@@ -145,5 +145,5 @@ func TestOpenAPIHandler_EmbeddedSpec(t *testing.T) {
 	assert.Equal(t, "3.1.0", result["openapi"])
 	info := result["info"].(map[string]interface{})
 	assert.Equal(t, "DAAP API", info["title"])
-	assert.Equal(t, "0.4.0", info["version"])
+	assert.Equal(t, "0.5.0", info["version"])
 }

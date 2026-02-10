@@ -82,9 +82,9 @@ func (n *noopTeamRepo) Delete(_ context.Context, _ uuid.UUID) error             
 type noopTierRepo struct{}
 
 func (n *noopTierRepo) Create(_ context.Context, _ *tier.Tier) error               { return nil }
-func (n *noopTierRepo) GetByID(_ context.Context, _ uuid.UUID) (*tier.Tier, error)  { return nil, nil }
-func (n *noopTierRepo) GetByName(_ context.Context, _ string) (*tier.Tier, error)   { return nil, nil }
-func (n *noopTierRepo) List(_ context.Context) ([]tier.Tier, error)                 { return nil, nil }
+func (n *noopTierRepo) GetByID(_ context.Context, _ uuid.UUID) (*tier.Tier, error) { return nil, nil }
+func (n *noopTierRepo) GetByName(_ context.Context, _ string) (*tier.Tier, error)  { return nil, nil }
+func (n *noopTierRepo) List(_ context.Context) ([]tier.Tier, error)                { return nil, nil }
 func (n *noopTierRepo) Update(_ context.Context, _ uuid.UUID, _ tier.UpdateFields) (*tier.Tier, error) {
 	return nil, nil
 }
@@ -129,6 +129,7 @@ func TestOpenAPISpec_RoutesCoverAllPaths(t *testing.T) {
 		K8sManager:  &noopManager{},
 		AuthService: authService,
 		TeamRepo:    teamRepo,
+		TierRepo:    &noopTierRepo{},
 		UserRepo:    userRepo,
 	})
 

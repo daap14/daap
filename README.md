@@ -30,7 +30,7 @@ The spec source file is at `api/openapi.yaml`. It is embedded into the binary at
 
 DAAP uses API key authentication with role-based access control:
 
-- **Superuser**: A single admin identity, auto-created on first startup. Manages teams and users but cannot access business endpoints (databases).
+- **Superuser**: A single admin identity, auto-created on first startup. Manages teams and users but cannot access business endpoints (tiers, databases).
 - **Teams**: Groups of users with an assigned role (`platform` or `product`).
 - **Users**: Belong to a team. Each user has a unique API key for authentication.
 
@@ -54,12 +54,12 @@ curl -H "X-API-Key: daap_..." http://localhost:8080/teams
 
 ### Roles and Permissions
 
-| Caller | `/teams` | `/users` | `/databases` | `/health`, `/openapi.json` |
-|---|---|---|---|---|
-| Superuser | Full access | Full access | No access (403) | Public |
-| Platform user | No access (403) | No access (403) | Full access (all databases) | Public |
-| Product user | No access (403) | No access (403) | Own team's databases only | Public |
-| Unauthenticated | 401 | 401 | 401 | Public |
+| Caller | `/teams` | `/users` | `/tiers` | `/databases` | `/health`, `/openapi.json` |
+|---|---|---|---|---|---|
+| Superuser | Full access | Full access | No access (403) | No access (403) | Public |
+| Platform user | No access (403) | No access (403) | Full CRUD | Full access (all databases) | Public |
+| Product user | No access (403) | No access (403) | Read-only (redacted) | Own team's databases only | Public |
+| Unauthenticated | 401 | 401 | 401 | 401 | Public |
 
 ### Public Endpoints
 
@@ -86,6 +86,22 @@ The following endpoints require no authentication:
 | `GET` | `/users` | List all users (metadata only) |
 | `DELETE` | `/users/{id}` | Revoke a user |
 
+### Tiers
+
+Tiers define the infrastructure parameters applied to databases (cluster sizing, storage, PostgreSQL version, pooler config, destruction strategy). Platform users manage tiers; product users see only a summary (id, name, description).
+
+| Method | Path | Description | Access |
+|---|---|---|---|
+| `POST` | `/tiers` | Create a tier | Platform only |
+| `GET` | `/tiers` | List all tiers | Platform (full) / Product (summary) |
+| `GET` | `/tiers/{id}` | Get a tier by ID | Platform (full) / Product (summary) |
+| `PATCH` | `/tiers/{id}` | Update a tier | Platform only |
+| `DELETE` | `/tiers/{id}` | Delete a tier | Platform only |
+
+Product users receive a redacted response with only `id`, `name`, and `description`. Platform users see all 15 fields including `instances`, `cpu`, `memory`, `storageSize`, `pgVersion`, `poolMode`, `maxConnections`, and more.
+
+A tier cannot be deleted while databases reference it (returns 409 `TIER_HAS_DATABASES`).
+
 ### Databases (platform/product roles)
 
 | Method | Path | Description |
@@ -95,6 +111,8 @@ The following endpoints require no authentication:
 | `GET` | `/databases/{id}` | Get a database by ID |
 | `PATCH` | `/databases/{id}` | Update a database |
 | `DELETE` | `/databases/{id}` | Delete a database |
+
+Creating a database requires a `tier` name (e.g., `"tier": "standard"`). The tier determines the CNPG cluster configuration (instances, CPU, memory, storage, PG version) and pooler settings (pool mode, max connections).
 
 ## Development
 
