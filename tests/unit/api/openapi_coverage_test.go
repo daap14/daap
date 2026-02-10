@@ -74,6 +74,7 @@ type noopTeamRepo struct{}
 
 func (n *noopTeamRepo) Create(_ context.Context, _ *team.Team) error               { return nil }
 func (n *noopTeamRepo) GetByID(_ context.Context, _ uuid.UUID) (*team.Team, error) { return nil, nil }
+func (n *noopTeamRepo) GetByName(_ context.Context, _ string) (*team.Team, error)  { return nil, nil }
 func (n *noopTeamRepo) List(_ context.Context) ([]team.Team, error)                { return nil, nil }
 func (n *noopTeamRepo) Delete(_ context.Context, _ uuid.UUID) error                { return nil }
 
