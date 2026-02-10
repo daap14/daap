@@ -19,6 +19,7 @@ import (
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/reconciler"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 func main() {
@@ -66,9 +67,11 @@ func main() {
 
 	var authService *auth.Service
 	var teamRepo team.Repository
+	var tierRepo tier.Repository
 	var userRepo auth.UserRepository
 	if db != nil {
 		teamRepo = team.NewRepository(db.Pool())
+		tierRepo = tier.NewPostgresRepository(db.Pool())
 		userRepo = auth.NewRepository(db.Pool())
 		authService = auth.NewService(userRepo, teamRepo, cfg.BcryptCost)
 
@@ -90,6 +93,7 @@ func main() {
 		OpenAPISpec: specpkg.OpenAPISpec,
 		AuthService: authService,
 		TeamRepo:    teamRepo,
+		TierRepo:    tierRepo,
 		UserRepo:    userRepo,
 	})
 

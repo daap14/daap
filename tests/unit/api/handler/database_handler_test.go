@@ -21,6 +21,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // --- Mock Repository ---
@@ -184,10 +185,78 @@ func (m *mockDBTeamRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// --- Mock Tier Repository ---
+
+type mockTierRepo struct {
+	getByNameFn func(ctx context.Context, name string) (*tier.Tier, error)
+	getByIDFn   func(ctx context.Context, id uuid.UUID) (*tier.Tier, error)
+	createFn    func(ctx context.Context, t *tier.Tier) error
+	listFn      func(ctx context.Context) ([]tier.Tier, error)
+	updateFn    func(ctx context.Context, id uuid.UUID, fields tier.UpdateFields) (*tier.Tier, error)
+	deleteFn    func(ctx context.Context, id uuid.UUID) error
+}
+
+func (m *mockTierRepo) Create(ctx context.Context, t *tier.Tier) error {
+	if m.createFn != nil {
+		return m.createFn(ctx, t)
+	}
+	return nil
+}
+
+func (m *mockTierRepo) GetByID(ctx context.Context, id uuid.UUID) (*tier.Tier, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return nil, tier.ErrTierNotFound
+}
+
+func (m *mockTierRepo) GetByName(ctx context.Context, name string) (*tier.Tier, error) {
+	if m.getByNameFn != nil {
+		return m.getByNameFn(ctx, name)
+	}
+	return &tier.Tier{
+		ID:             uuid.New(),
+		Name:           name,
+		Instances:      1,
+		CPU:            "500m",
+		Memory:         "512Mi",
+		StorageSize:    "1Gi",
+		PGVersion:      "16",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
+	}, nil
+}
+
+func (m *mockTierRepo) List(ctx context.Context) ([]tier.Tier, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx)
+	}
+	return []tier.Tier{}, nil
+}
+
+func (m *mockTierRepo) Update(ctx context.Context, id uuid.UUID, fields tier.UpdateFields) (*tier.Tier, error) {
+	if m.updateFn != nil {
+		return m.updateFn(ctx, id, fields)
+	}
+	return nil, tier.ErrTierNotFound
+}
+
+func (m *mockTierRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	if m.deleteFn != nil {
+		return m.deleteFn(ctx, id)
+	}
+	return nil
+}
+
 // --- Helpers ---
 
 func newTestHandler(repo database.Repository, mgr k8s.ResourceManager, teamRepo team.Repository) *handler.DatabaseHandler {
-	return handler.NewDatabaseHandler(repo, mgr, teamRepo, "default")
+	tierRepo := &mockTierRepo{}
+	return handler.NewDatabaseHandler(repo, mgr, teamRepo, tierRepo, "default")
+}
+
+func newTestHandlerWithTierRepo(repo database.Repository, mgr k8s.ResourceManager, teamRepo team.Repository, tierRepo tier.Repository) *handler.DatabaseHandler {
+	return handler.NewDatabaseHandler(repo, mgr, teamRepo, tierRepo, "default")
 }
 
 func makeChiRequest(method, path string, body []byte, routePattern string, params map[string]string) (*http.Request, *httptest.ResponseRecorder) {
@@ -261,6 +330,7 @@ func TestCreate_Success(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 		"purpose":   "testing",
 	})
 
@@ -324,6 +394,7 @@ func TestCreate_DuplicateName(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "existing-db",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
@@ -353,6 +424,7 @@ func TestCreate_OwnerTeamNotFound(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "nonexistent-team",
+		"tier":      "standard",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
@@ -388,6 +460,7 @@ func TestCreate_K8sError_MarksRecordAsError(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
@@ -405,6 +478,124 @@ func TestCreate_K8sError_MarksRecordAsError(t *testing.T) {
 	// Assert: record was marked as "error"
 	require.NotNil(t, statusUpdate, "expected UpdateStatus to be called")
 	assert.Equal(t, "error", statusUpdate.Status)
+}
+
+func TestCreate_TierRequired(t *testing.T) {
+	// Arrange: tier field is missing from the request
+	repo := &mockRepo{}
+	mgr := &mockManager{}
+	teamRepo := &mockDBTeamRepo{}
+	h := newTestHandler(repo, mgr, teamRepo)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":      "mydb",
+		"ownerTeam": "platform",
+	})
+
+	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
+
+	// Act
+	h.Create(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	env := parseEnvelope(t, w)
+	errObj := env["error"].(map[string]interface{})
+	assert.Equal(t, "VALIDATION_ERROR", errObj["code"])
+
+	details := errObj["details"].([]interface{})
+	hasTierErr := false
+	for _, d := range details {
+		detail := d.(map[string]interface{})
+		if detail["field"] == "tier" {
+			hasTierErr = true
+			break
+		}
+	}
+	assert.True(t, hasTierErr, "expected tier field error")
+}
+
+func TestCreate_TierNotFound(t *testing.T) {
+	// Arrange: tier name doesn't match any tier
+	repo := &mockRepo{}
+	mgr := &mockManager{}
+	teamRepo := &mockDBTeamRepo{}
+	tierRepo := &mockTierRepo{
+		getByNameFn: func(_ context.Context, _ string) (*tier.Tier, error) {
+			return nil, tier.ErrTierNotFound
+		},
+	}
+	h := newTestHandlerWithTierRepo(repo, mgr, teamRepo, tierRepo)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":      "mydb",
+		"ownerTeam": "platform",
+		"tier":      "nonexistent",
+	})
+
+	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
+
+	// Act
+	h.Create(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	env := parseEnvelope(t, w)
+	errObj := env["error"].(map[string]interface{})
+	assert.Equal(t, "NOT_FOUND", errObj["code"])
+}
+
+func TestCreate_TierNameInResponse(t *testing.T) {
+	// Arrange: mock creates a DB with tier info populated
+	stdTierID := uuid.New()
+	repo := &mockRepo{
+		createFn: func(_ context.Context, db *database.Database) error {
+			db.ID = uuid.New()
+			db.ClusterName = "daap-" + db.Name
+			db.PoolerName = "daap-" + db.Name + "-pooler"
+			db.Status = "provisioning"
+			db.TierName = "standard"
+			return nil
+		},
+	}
+	mgr := &mockManager{}
+	teamRepo := &mockDBTeamRepo{}
+	tierRepo := &mockTierRepo{
+		getByNameFn: func(_ context.Context, name string) (*tier.Tier, error) {
+			return &tier.Tier{
+				ID:             stdTierID,
+				Name:           name,
+				Instances:      1,
+				CPU:            "500m",
+				Memory:         "512Mi",
+				StorageSize:    "1Gi",
+				PGVersion:      "16",
+				PoolMode:       "transaction",
+				MaxConnections: 100,
+			}, nil
+		},
+	}
+	h := newTestHandlerWithTierRepo(repo, mgr, teamRepo, tierRepo)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":      "mydb",
+		"ownerTeam": "platform",
+		"tier":      "standard",
+	})
+
+	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
+
+	// Act
+	h.Create(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	env := parseEnvelope(t, w)
+	data := env["data"].(map[string]interface{})
+	assert.Equal(t, "standard", data["tier"])
 }
 
 // ===== GET /databases =====

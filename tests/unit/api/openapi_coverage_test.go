@@ -21,6 +21,7 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 // openAPISpec is the minimal structure needed to extract paths from the spec.
@@ -77,6 +78,17 @@ func (n *noopTeamRepo) GetByID(_ context.Context, _ uuid.UUID) (*team.Team, erro
 func (n *noopTeamRepo) GetByName(_ context.Context, _ string) (*team.Team, error)  { return nil, nil }
 func (n *noopTeamRepo) List(_ context.Context) ([]team.Team, error)                { return nil, nil }
 func (n *noopTeamRepo) Delete(_ context.Context, _ uuid.UUID) error                { return nil }
+
+type noopTierRepo struct{}
+
+func (n *noopTierRepo) Create(_ context.Context, _ *tier.Tier) error               { return nil }
+func (n *noopTierRepo) GetByID(_ context.Context, _ uuid.UUID) (*tier.Tier, error)  { return nil, nil }
+func (n *noopTierRepo) GetByName(_ context.Context, _ string) (*tier.Tier, error)   { return nil, nil }
+func (n *noopTierRepo) List(_ context.Context) ([]tier.Tier, error)                 { return nil, nil }
+func (n *noopTierRepo) Update(_ context.Context, _ uuid.UUID, _ tier.UpdateFields) (*tier.Tier, error) {
+	return nil, nil
+}
+func (n *noopTierRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
 
 type noopUserRepo struct{}
 
