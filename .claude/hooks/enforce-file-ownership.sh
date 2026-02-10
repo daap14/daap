@@ -37,33 +37,36 @@ case "$AGENT" in
         ;;
     esac
     ;;
-  implementer)
+  dev)
     case "$REL_PATH" in
-      src/*)
-        # Reject test files
-        case "$REL_PATH" in
-          *.test.*|*.spec.*)
-            echo "OWNERSHIP VIOLATION: implementer cannot write test files. Use qa agent. Attempted: $REL_PATH" >&2
-            exit 2
-            ;;
-          *)
-            exit 0
-            ;;
-        esac
+      internal/*|cmd/*|migrations/*|tests/*)
+        exit 0
+        ;;
+      *_test.go)
+        exit 0
+        ;;
+      README.md)
+        exit 0
+        ;;
+      .claude/rules/*)
+        exit 0
+        ;;
+      go.mod|go.sum)
+        exit 0
         ;;
       *)
-        echo "OWNERSHIP VIOLATION: implementer can only write to src/ (excluding test files). Attempted: $REL_PATH" >&2
+        echo "OWNERSHIP VIOLATION: dev can only write to internal/, cmd/, migrations/, tests/, *_test.go, README.md, .claude/rules/, go.mod, go.sum. Attempted: $REL_PATH" >&2
         exit 2
         ;;
     esac
     ;;
-  qa)
+  reviewer)
     case "$REL_PATH" in
-      tests/*|*.test.*|*.spec.*)
+      .claude/rules/*)
         exit 0
         ;;
       *)
-        echo "OWNERSHIP VIOLATION: qa can only write to tests/ and test files (*.test.*, *.spec.*). Attempted: $REL_PATH" >&2
+        echo "OWNERSHIP VIOLATION: reviewer can only write to .claude/rules/. Attempted: $REL_PATH" >&2
         exit 2
         ;;
     esac
@@ -82,11 +85,44 @@ case "$AGENT" in
       .env.example|.env.test)
         exit 0
         ;;
-      .eslintrc*|.prettierrc*|biome.json|.editorconfig|.tool-versions|.nvmrc|.node-version)
+      .golangci.yml|.editorconfig|.tool-versions)
         exit 0
         ;;
       *)
         echo "OWNERSHIP VIOLATION: local-devops can only write to Docker files, workflows, Makefile, scripts/, env examples, and tooling configs. Attempted: $REL_PATH" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  product-researcher)
+    case "$REL_PATH" in
+      docs/research/*)
+        exit 0
+        ;;
+      *)
+        echo "OWNERSHIP VIOLATION: product-researcher can only write to docs/research/. Attempted: $REL_PATH" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  product-strategist)
+    case "$REL_PATH" in
+      docs/product/*)
+        exit 0
+        ;;
+      *)
+        echo "OWNERSHIP VIOLATION: product-strategist can only write to docs/product/. Attempted: $REL_PATH" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  product-manager)
+    case "$REL_PATH" in
+      docs/product/*)
+        exit 0
+        ;;
+      *)
+        echo "OWNERSHIP VIOLATION: product-manager can only write to docs/product/. Attempted: $REL_PATH" >&2
         exit 2
         ;;
     esac

@@ -36,8 +36,8 @@ You may only write to:
 - `.github/workflows/*.yml`
 - `Makefile`, `scripts/*`
 - `.env.example`, `.env.test`
-- Linter/formatter configs: `.eslintrc.*`, `.prettierrc.*`, `biome.json`, etc.
-- `.editorconfig`, `.tool-versions`, `.nvmrc`, `.node-version`
+- Go tooling configs: `.golangci.yml`
+- `.editorconfig`, `.tool-versions`
 
 ## Behavioral Guidelines
 - Follow the devops rules in `.claude/rules/devops.md`

@@ -6,14 +6,15 @@ globs:
   - "Makefile"
 ---
 
-# DevOps Conventions
+# DevOps Conventions (Go)
 
 ## Docker
-- Use multi-stage builds (dev stage + prod stage)
-- Pin base image versions (e.g., `node:20.11-alpine`, not `node:latest`)
+- Use multi-stage builds (builder stage + production stage)
+- Pin base image versions (e.g., `golang:1.22-alpine`, not `golang:latest`)
 - Use `.dockerignore` to exclude unnecessary files
 - Run as non-root user in production stage
-- Order layers for maximum cache efficiency (deps before code)
+- Order layers for maximum cache efficiency: copy `go.mod`/`go.sum` first, then `go mod download`, then copy source
+- Final image: use `scratch` or `alpine` — no full OS images
 
 ## Docker Compose
 - Use named volumes for persistent data (database)
@@ -29,12 +30,23 @@ globs:
 
 ## CI/CD (GitHub Actions)
 - Run on: push to main, PR to main
-- Steps: install, lint, typecheck, build, test
-- Cache dependencies between runs
-- Fail fast on lint/type errors before running tests
-- Use matrix strategy for multiple runtime versions if needed
+- Steps: lint (`golangci-lint`), build, test
+- Cache Go modules between runs (`actions/cache` with `go.sum` key)
+- Fail fast on lint errors before running tests
 - When the test job uses a database service container, ALWAYS run migrations before tests
-- Every new config variable added to config.go must be documented in `.env.example`
+- Every new config variable added to `config.go` must be documented in `.env.example`
+
+## Local Development
+- Use k3d for local Kubernetes clusters (not Kind, not Minikube)
+- CNPG operator installed via Helm on k3d
+- `make cluster-up` creates a k3d cluster
+- `make cluster-down` tears down the k3d cluster
+
+## Go Tooling
+- Linter: `golangci-lint` (config in `.golangci.yml`)
+- Formatter: `gofmt` / `goimports`
+- Build: `go build ./...`
+- Test: `go test ./...` with `-race` flag
 
 ## Environment Config
 - Document all variables in `.env.example`
