@@ -25,8 +25,10 @@ linters:
       - linters:
           - govet
         path: _test\.go
-    max-issues-per-linter: 50
-    max-same-issues: 5
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 5
 
 formatters:
   enable:
