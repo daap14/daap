@@ -148,12 +148,8 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 		if u.TeamID != nil {
 			tid := u.TeamID.String()
 			resp.TeamID = &tid
-			// Fetch team to get name and role
-			t, err := h.teamRepo.GetByID(r.Context(), *u.TeamID)
-			if err == nil {
-				resp.TeamName = &t.Name
-				resp.Role = &t.Role
-			}
+			resp.TeamName = u.TeamName
+			resp.Role = u.TeamRole
 		}
 		if u.RevokedAt != nil {
 			revoked := u.RevokedAt.UTC().Format("2006-01-02T15:04:05Z")
