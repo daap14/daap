@@ -7,8 +7,10 @@ import (
 
 	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/api/middleware"
+	"github.com/daap14/daap/internal/auth"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/team"
 )
 
 // RouterDeps holds all dependencies needed by the router.
@@ -20,6 +22,9 @@ type RouterDeps struct {
 	K8sManager  k8s.ResourceManager
 	Namespace   string
 	OpenAPISpec []byte
+	AuthService *auth.Service
+	TeamRepo    team.Repository
+	UserRepo    auth.UserRepository
 }
 
 // NewRouter creates and configures a Chi router with all middleware and routes.
@@ -30,6 +35,7 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 	r.Use(middleware.Recovery)
 	r.Use(chimiddleware.Logger)
 
+	// Public routes (no auth)
 	healthHandler := handler.NewHealthHandler(deps.K8sChecker, deps.DBPinger, deps.Version)
 	r.Get("/health", healthHandler.ServeHTTP)
 
@@ -38,15 +44,54 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 		r.Get("/openapi.json", openapiHandler.ServeHTTP)
 	}
 
-	if deps.Repo != nil && deps.K8sManager != nil {
-		dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.Namespace)
-		r.Route("/databases", func(r chi.Router) {
-			r.Post("/", dbHandler.Create)
-			r.Get("/", dbHandler.List)
-			r.Get("/{id}", dbHandler.GetByID)
-			r.Patch("/{id}", dbHandler.Update)
-			r.Delete("/{id}", dbHandler.Delete)
+	// Authenticated routes
+	if deps.AuthService != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth(deps.AuthService))
+
+			// Superuser-only routes
+			if deps.TeamRepo != nil {
+				teamHandler := handler.NewTeamHandler(deps.TeamRepo)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireSuperuser())
+					r.Post("/teams", teamHandler.Create)
+					r.Get("/teams", teamHandler.List)
+					r.Delete("/teams/{id}", teamHandler.Delete)
+
+					if deps.UserRepo != nil {
+						userHandler := handler.NewUserHandler(deps.AuthService, deps.UserRepo, deps.TeamRepo)
+						r.Post("/users", userHandler.Create)
+						r.Get("/users", userHandler.List)
+						r.Delete("/users/{id}", userHandler.Delete)
+					}
+				})
+			}
+
+			// Business routes (platform + product)
+			if deps.Repo != nil && deps.K8sManager != nil {
+				dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.Namespace)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireRole("platform", "product"))
+					r.Post("/databases", dbHandler.Create)
+					r.Get("/databases", dbHandler.List)
+					r.Get("/databases/{id}", dbHandler.GetByID)
+					r.Patch("/databases/{id}", dbHandler.Update)
+					r.Delete("/databases/{id}", dbHandler.Delete)
+				})
+			}
 		})
+	} else {
+		// Fallback: no auth service — register database routes without auth (graceful degradation)
+		if deps.Repo != nil && deps.K8sManager != nil {
+			dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.Namespace)
+			r.Route("/databases", func(r chi.Router) {
+				r.Post("/", dbHandler.Create)
+				r.Get("/", dbHandler.List)
+				r.Get("/{id}", dbHandler.GetByID)
+				r.Patch("/{id}", dbHandler.Update)
+				r.Delete("/{id}", dbHandler.Delete)
+			})
+		}
 	}
 
 	return r
