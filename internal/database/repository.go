@@ -22,6 +22,9 @@ var ErrDuplicateName = errors.New("database name already exists")
 // ErrInvalidOwnerTeam is returned when owner_team_id references a non-existent team.
 var ErrInvalidOwnerTeam = errors.New("invalid owner team")
 
+// ErrInvalidTier is returned when tier_id references a non-existent tier.
+var ErrInvalidTier = errors.New("invalid tier")
+
 // Repository provides CRUD operations on the databases table.
 type Repository interface {
 	Create(ctx context.Context, db *Database) error
@@ -52,13 +55,14 @@ func (r *PostgresRepository) Create(ctx context.Context, db *Database) error {
 	}
 
 	query := `
-		INSERT INTO databases (name, owner_team_id, purpose, namespace, cluster_name, pooler_name, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO databases (name, owner_team_id, tier_id, purpose, namespace, cluster_name, pooler_name, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at`
 
 	err := r.pool.QueryRow(ctx, query,
 		db.Name,
 		db.OwnerTeamID,
+		db.TierID,
 		db.Purpose,
 		db.Namespace,
 		db.ClusterName,
@@ -72,6 +76,9 @@ func (r *PostgresRepository) Create(ctx context.Context, db *Database) error {
 				return ErrDuplicateName
 			}
 			if pgErr.Code == "23503" {
+				if strings.Contains(pgErr.ConstraintName, "tier") {
+					return ErrInvalidTier
+				}
 				return ErrInvalidOwnerTeam
 			}
 		}
@@ -84,12 +91,14 @@ func (r *PostgresRepository) Create(ctx context.Context, db *Database) error {
 // GetByID retrieves a single non-deleted database by its UUID.
 func (r *PostgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*Database, error) {
 	query := `
-		SELECT d.id, d.name, d.owner_team_id, t.name, d.purpose, d.namespace,
+		SELECT d.id, d.name, d.owner_team_id, t.name, d.tier_id, COALESCE(tr.name, ''),
+		       d.purpose, d.namespace,
 		       d.cluster_name, d.pooler_name, d.status,
 		       d.host, d.port, d.secret_name,
 		       d.created_at, d.updated_at, d.deleted_at
 		FROM databases d
 		LEFT JOIN teams t ON d.owner_team_id = t.id
+		LEFT JOIN tiers tr ON d.tier_id = tr.id
 		WHERE d.id = $1 AND d.deleted_at IS NULL`
 
 	return r.scanOne(ctx, query, id)
@@ -141,12 +150,14 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*List
 	offset := (filter.Page - 1) * filter.Limit
 
 	dataQuery := fmt.Sprintf(`
-		SELECT d.id, d.name, d.owner_team_id, t.name, d.purpose, d.namespace,
+		SELECT d.id, d.name, d.owner_team_id, t.name, d.tier_id, COALESCE(tr.name, ''),
+		       d.purpose, d.namespace,
 		       d.cluster_name, d.pooler_name, d.status,
 		       d.host, d.port, d.secret_name,
 		       d.created_at, d.updated_at, d.deleted_at
 		FROM databases d
 		LEFT JOIN teams t ON d.owner_team_id = t.id
+		LEFT JOIN tiers tr ON d.tier_id = tr.id
 		%s
 		ORDER BY d.created_at DESC
 		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
@@ -163,7 +174,8 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*List
 	for rows.Next() {
 		var db Database
 		err := rows.Scan(
-			&db.ID, &db.Name, &db.OwnerTeamID, &db.OwnerTeamName, &db.Purpose, &db.Namespace,
+			&db.ID, &db.Name, &db.OwnerTeamID, &db.OwnerTeamName, &db.TierID, &db.TierName,
+			&db.Purpose, &db.Namespace,
 			&db.ClusterName, &db.PoolerName, &db.Status,
 			&db.Host, &db.Port, &db.SecretName,
 			&db.CreatedAt, &db.UpdatedAt, &db.DeletedAt,
@@ -220,6 +232,7 @@ func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, fields Up
 		WHERE d.id = $%d AND d.deleted_at IS NULL
 		RETURNING d.id, d.name, d.owner_team_id,
 		          (SELECT t.name FROM teams t WHERE t.id = d.owner_team_id),
+		          d.tier_id, COALESCE((SELECT tr.name FROM tiers tr WHERE tr.id = d.tier_id), ''),
 		          d.purpose, d.namespace, d.cluster_name, d.pooler_name,
 		          d.status, d.host, d.port, d.secret_name,
 		          d.created_at, d.updated_at, d.deleted_at`,
@@ -272,6 +285,7 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, id uuid.UUID, su 
 		WHERE d.id = $%d AND d.deleted_at IS NULL
 		RETURNING d.id, d.name, d.owner_team_id,
 		          (SELECT t.name FROM teams t WHERE t.id = d.owner_team_id),
+		          d.tier_id, COALESCE((SELECT tr.name FROM tiers tr WHERE tr.id = d.tier_id), ''),
 		          d.purpose, d.namespace, d.cluster_name, d.pooler_name,
 		          d.status, d.host, d.port, d.secret_name,
 		          d.created_at, d.updated_at, d.deleted_at`,
@@ -304,7 +318,8 @@ func (r *PostgresRepository) SoftDelete(ctx context.Context, id uuid.UUID) error
 func (r *PostgresRepository) scanOne(ctx context.Context, query string, args ...any) (*Database, error) {
 	var db Database
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
-		&db.ID, &db.Name, &db.OwnerTeamID, &db.OwnerTeamName, &db.Purpose, &db.Namespace,
+		&db.ID, &db.Name, &db.OwnerTeamID, &db.OwnerTeamName, &db.TierID, &db.TierName,
+		&db.Purpose, &db.Namespace,
 		&db.ClusterName, &db.PoolerName, &db.Status,
 		&db.Host, &db.Port, &db.SecretName,
 		&db.CreatedAt, &db.UpdatedAt, &db.DeletedAt,
