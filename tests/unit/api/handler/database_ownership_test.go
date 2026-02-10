@@ -81,6 +81,7 @@ func TestCreate_ProductUser_AutoSetsOwnerTeam(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name": "mydb",
+		"tier": "standard",
 	})
 
 	identity := productIdentity("my-team", myTeamID)
@@ -109,6 +110,7 @@ func TestCreate_ProductUser_MatchingOwnerTeamAllowed(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "my-team",
+		"tier":      "standard",
 	})
 
 	identity := productIdentity("my-team", myTeamID)
@@ -156,6 +158,7 @@ func TestCreate_PlatformUser_AnyOwnerTeamAllowed(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "any-team",
+		"tier":      "standard",
 	})
 
 	identity := platformIdentity()

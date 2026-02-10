@@ -26,6 +26,7 @@ import (
 type createDatabaseRequest struct {
 	Name      string `json:"name"`
 	OwnerTeam string `json:"ownerTeam"`
+	Tier      string `json:"tier"`
 	Purpose   string `json:"purpose"`
 	Namespace string `json:"namespace"`
 }
@@ -132,6 +133,7 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	fieldErrors := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 		Name:      req.Name,
 		OwnerTeam: req.OwnerTeam,
+		Tier:      req.Tier,
 	})
 	if len(fieldErrors) > 0 {
 		response.ErrWithDetails(w, http.StatusBadRequest, "VALIDATION_ERROR", "Input validation failed", fieldErrors, requestID)

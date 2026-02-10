@@ -261,6 +261,7 @@ func TestCreate_Success(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 		"purpose":   "testing",
 	})
 
@@ -324,6 +325,7 @@ func TestCreate_DuplicateName(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "existing-db",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
@@ -353,6 +355,7 @@ func TestCreate_OwnerTeamNotFound(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "nonexistent-team",
+		"tier":      "standard",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
@@ -388,6 +391,7 @@ func TestCreate_K8sError_MarksRecordAsError(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/databases", body, "/databases", nil)
