@@ -127,9 +127,11 @@ func TestApplyPooler_Create(t *testing.T) {
 	ctx := context.Background()
 
 	pooler := template.BuildPooler(template.PoolerParams{
-		Name:        "testdb",
-		Namespace:   "default",
-		ClusterName: "daap-testdb",
+		Name:           "testdb",
+		Namespace:      "default",
+		ClusterName:    "daap-testdb",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
 	})
 
 	err := mgr.ApplyPooler(ctx, pooler)
@@ -181,9 +183,11 @@ func TestDeletePooler_Success(t *testing.T) {
 	ctx := context.Background()
 
 	existing := template.BuildPooler(template.PoolerParams{
-		Name:        "testdb",
-		Namespace:   "default",
-		ClusterName: "daap-testdb",
+		Name:           "testdb",
+		Namespace:      "default",
+		ClusterName:    "daap-testdb",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
 	})
 
 	mgr, _ := newTestManager(existing)

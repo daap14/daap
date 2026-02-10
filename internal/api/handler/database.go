@@ -193,10 +193,13 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO(v0.5): replace hardcoded defaults with tier params once handler accepts tier
 	pooler := template.BuildPooler(template.PoolerParams{
-		Name:        db.Name,
-		Namespace:   db.Namespace,
-		ClusterName: db.ClusterName,
+		Name:           db.Name,
+		Namespace:      db.Namespace,
+		ClusterName:    db.ClusterName,
+		PoolMode:       "transaction",
+		MaxConnections: 100,
 	})
 
 	if err := h.manager.ApplyPooler(r.Context(), pooler); err != nil {

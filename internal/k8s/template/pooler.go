@@ -7,13 +7,17 @@ import (
 )
 
 // PoolerParams configures a CNPG Pooler (PgBouncer) resource.
+// All fields must be explicitly provided — there are no silent defaults.
 type PoolerParams struct {
-	Name        string
-	Namespace   string
-	ClusterName string // the CNPG Cluster name (daap-{dbname})
+	Name           string
+	Namespace      string
+	ClusterName    string // the CNPG Cluster name (daap-{dbname})
+	PoolMode       string // "transaction", "session", or "statement"
+	MaxConnections int    // PgBouncer max connections
 }
 
 // BuildPooler creates an unstructured CNPG Pooler resource from the given parameters.
+// All infrastructure values come from the tier — no hardcoded defaults.
 func BuildPooler(params PoolerParams) *unstructured.Unstructured {
 	name := fmt.Sprintf("daap-%s-pooler", params.Name)
 
@@ -35,7 +39,10 @@ func BuildPooler(params PoolerParams) *unstructured.Unstructured {
 				},
 				"type": "rw",
 				"pgbouncer": map[string]any{
-					"poolMode": "transaction",
+					"poolMode": params.PoolMode,
+					"parameters": map[string]any{
+						"default_pool_size": fmt.Sprintf("%d", params.MaxConnections),
+					},
 				},
 			},
 		},
