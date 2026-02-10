@@ -85,6 +85,17 @@ func TestOpenAPIHandler_InvalidYAML_Returns500(t *testing.T) {
 	h.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+	var env map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &env)
+	require.NoError(t, err, "error response should be valid JSON envelope")
+
+	assert.Nil(t, env["data"])
+	assert.NotNil(t, env["error"])
+
+	errObj := env["error"].(map[string]interface{})
+	assert.Equal(t, "INTERNAL_ERROR", errObj["code"])
 }
 
 func TestOpenAPIHandler_CachesConversion(t *testing.T) {

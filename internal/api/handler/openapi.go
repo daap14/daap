@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/daap14/daap/internal/api/middleware"
+	"github.com/daap14/daap/internal/api/response"
 	"sigs.k8s.io/yaml"
 )
 
@@ -29,7 +31,8 @@ func (h *OpenAPIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if h.jsonErr != nil {
 		slog.Error("failed to convert OpenAPI spec to JSON", "error", h.jsonErr)
-		http.Error(w, `{"error":"failed to convert spec"}`, http.StatusInternalServerError)
+		requestID := middleware.GetRequestID(r.Context())
+		response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to convert OpenAPI spec", requestID)
 		return
 	}
 
