@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: DAAP API
   description: Database as a Service platform API
-  version: 0.2.0
+  version: 0.3.0
   license:
     name: MIT
 
@@ -16,14 +16,14 @@ paths:
       summary: Health check
       description: >
         Returns the health status of the API server, including Kubernetes
-        connectivity. Returns "healthy" when all dependencies are reachable,
-        "degraded" when Kubernetes is unreachable but the server is running.
+        and database connectivity. Returns "healthy" when all dependencies
+        are reachable, "degraded" when a dependency is unreachable.
       operationId: getHealth
       tags:
         - system
       responses:
         "200":
-          description: Server is healthy or degraded (K8s unreachable)
+          description: Server is healthy or degraded
           content:
             application/json:
               schema:
@@ -34,44 +34,58 @@ paths:
                   value:
                     data:
                       status: healthy
-                      version: 0.1.0
+                      version: 0.3.0
                       kubernetes:
                         connected: true
-                        version: "1.31.0"
+                        version: "v1.31.0"
+                      database:
+                        connected: true
                     error: null
                     meta:
                       requestId: "550e8400-e29b-41d4-a716-446655440000"
-                      timestamp: "2026-01-15T10:30:00Z"
+                      timestamp: "2026-02-10T10:30:00Z"
                 degraded:
-                  summary: Kubernetes unreachable
+                  summary: Kubernetes or database unreachable
                   value:
                     data:
                       status: degraded
-                      version: 0.1.0
+                      version: 0.3.0
                       kubernetes:
                         connected: false
                         version: null
+                      database:
+                        connected: true
                     error: null
                     meta:
                       requestId: "550e8400-e29b-41d4-a716-446655440001"
-                      timestamp: "2026-01-15T10:30:00Z"
+                      timestamp: "2026-02-10T10:30:00Z"
         "500":
           description: Internal server error
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-              examples:
-                internalError:
-                  summary: Unexpected error
-                  value:
-                    data: null
-                    error:
-                      code: INTERNAL_ERROR
-                      message: An unexpected error occurred
-                    meta:
-                      requestId: "550e8400-e29b-41d4-a716-446655440002"
-                      timestamp: "2026-01-15T10:30:00Z"
+
+  /openapi.json:
+    get:
+      summary: OpenAPI specification
+      description: Returns the OpenAPI 3.1 specification for this API in JSON format.
+      operationId: getOpenAPISpec
+      tags:
+        - system
+      responses:
+        "200":
+          description: OpenAPI specification in JSON format
+          content:
+            application/json:
+              schema:
+                type: object
+        "500":
+          description: Failed to convert spec to JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /databases:
     post:
@@ -94,15 +108,14 @@ paths:
                 summary: Minimal request (required fields only)
                 value:
                   name: my-app-db
-                  owner_team: platform-team
+                  ownerTeam: platform-team
               full:
                 summary: Full request with all optional fields
                 value:
                   name: my-app-db
-                  owner_team: platform-team
+                  ownerTeam: platform-team
                   purpose: Primary database for the user service
-                  instances: 3
-                  storage_size: 10Gi
+                  namespace: staging
       responses:
         "201":
           description: Database creation initiated
@@ -117,25 +130,26 @@ paths:
                     data:
                       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       name: my-app-db
-                      owner_team: platform-team
+                      ownerTeam: platform-team
                       purpose: Primary database for the user service
                       namespace: default
-                      cluster_name: cnpg-my-app-db
-                      pooler_name: cnpg-my-app-db-pooler
+                      clusterName: cnpg-my-app-db
+                      poolerName: cnpg-my-app-db-pooler
                       status: provisioning
-                      connection: null
-                      created_at: "2026-02-01T12:00:00Z"
-                      updated_at: "2026-02-01T12:00:00Z"
+                      createdAt: "2026-02-01T12:00:00Z"
+                      updatedAt: "2026-02-01T12:00:00Z"
                     error: null
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440010"
                       timestamp: "2026-02-01T12:00:00Z"
         "400":
-          description: Validation error
+          description: Validation error or invalid JSON
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ValidationErrorResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
               examples:
                 missingFields:
                   summary: Required fields missing
@@ -143,13 +157,24 @@ paths:
                     data: null
                     error:
                       code: VALIDATION_ERROR
-                      message: Request validation failed
+                      message: Input validation failed
                       details:
-                        fields:
-                          name: "name is required"
-                          owner_team: "owner_team is required"
+                        - field: name
+                          message: "name is required"
+                        - field: ownerTeam
+                          message: "ownerTeam is required"
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440011"
+                      timestamp: "2026-02-01T12:00:00Z"
+                invalidJson:
+                  summary: Malformed request body
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_JSON
+                      message: Request body must be valid JSON
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440012"
                       timestamp: "2026-02-01T12:00:00Z"
         "409":
           description: Database name already exists
@@ -158,15 +183,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               examples:
-                conflict:
+                duplicate:
                   summary: Duplicate database name
                   value:
                     data: null
                     error:
-                      code: CONFLICT
-                      message: "A database with name 'my-app-db' already exists"
+                      code: DUPLICATE_NAME
+                      message: "A database named \"my-app-db\" already exists"
                     meta:
-                      requestId: "660e8400-e29b-41d4-a716-446655440012"
+                      requestId: "660e8400-e29b-41d4-a716-446655440013"
                       timestamp: "2026-02-01T12:00:00Z"
         "500":
           description: Internal server error
@@ -179,7 +204,7 @@ paths:
       summary: List databases
       description: >
         Returns a paginated list of databases, optionally filtered by owner team,
-        status, or name. Only active (non-deleted) databases are returned by default.
+        status, or name. Only active (non-deleted) databases are returned.
       operationId: listDatabases
       tags:
         - databases
@@ -206,7 +231,7 @@ paths:
         - name: name
           in: query
           required: false
-          description: Filter by name (case-insensitive partial match via ILIKE)
+          description: Filter by name (case-insensitive partial match)
           schema:
             type: string
           example: my-app
@@ -243,20 +268,17 @@ paths:
                     data:
                       - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                         name: my-app-db
-                        owner_team: platform-team
+                        ownerTeam: platform-team
                         purpose: Primary database for the user service
                         namespace: default
-                        cluster_name: cnpg-my-app-db
-                        pooler_name: cnpg-my-app-db-pooler
+                        clusterName: cnpg-my-app-db
+                        poolerName: cnpg-my-app-db-pooler
                         status: ready
-                        connection:
-                          host: cnpg-my-app-db-pooler.default.svc
-                          port: 5432
-                          dbname: app
-                          username: app
-                          password: "generated-secret"
-                        created_at: "2026-02-01T12:00:00Z"
-                        updated_at: "2026-02-01T12:05:00Z"
+                        host: cnpg-my-app-db-pooler.default.svc
+                        port: 5432
+                        secretName: cnpg-my-app-db-app
+                        createdAt: "2026-02-01T12:00:00Z"
+                        updatedAt: "2026-02-01T12:05:00Z"
                     error: null
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440020"
@@ -275,6 +297,23 @@ paths:
                       total: 0
                       page: 1
                       limit: 20
+        "400":
+          description: Invalid query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidPage:
+                  summary: Invalid page parameter
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_PARAM
+                      message: page must be a positive integer
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440022"
+                      timestamp: "2026-02-01T12:10:00Z"
         "500":
           description: Internal server error
           content:
@@ -314,23 +353,55 @@ paths:
                     data:
                       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       name: my-app-db
-                      owner_team: platform-team
+                      ownerTeam: platform-team
                       purpose: Primary database for the user service
                       namespace: default
-                      cluster_name: cnpg-my-app-db
-                      pooler_name: cnpg-my-app-db-pooler
+                      clusterName: cnpg-my-app-db
+                      poolerName: cnpg-my-app-db-pooler
                       status: ready
-                      connection:
-                        host: cnpg-my-app-db-pooler.default.svc
-                        port: 5432
-                        dbname: app
-                        username: app
-                        password: "generated-secret"
-                      created_at: "2026-02-01T12:00:00Z"
-                      updated_at: "2026-02-01T12:05:00Z"
+                      host: cnpg-my-app-db-pooler.default.svc
+                      port: 5432
+                      secretName: cnpg-my-app-db-app
+                      createdAt: "2026-02-01T12:00:00Z"
+                      updatedAt: "2026-02-01T12:05:00Z"
                     error: null
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440030"
+                      timestamp: "2026-02-01T12:10:00Z"
+                provisioning:
+                  summary: Database still provisioning (no connection details)
+                  value:
+                    data:
+                      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                      name: my-app-db
+                      ownerTeam: platform-team
+                      purpose: Primary database for the user service
+                      namespace: default
+                      clusterName: cnpg-my-app-db
+                      poolerName: cnpg-my-app-db-pooler
+                      status: provisioning
+                      createdAt: "2026-02-01T12:00:00Z"
+                      updatedAt: "2026-02-01T12:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440031"
+                      timestamp: "2026-02-01T12:10:00Z"
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440032"
                       timestamp: "2026-02-01T12:10:00Z"
         "404":
           description: Database not found
@@ -345,9 +416,9 @@ paths:
                     data: null
                     error:
                       code: NOT_FOUND
-                      message: "Database not found"
+                      message: Database not found
                     meta:
-                      requestId: "660e8400-e29b-41d4-a716-446655440031"
+                      requestId: "660e8400-e29b-41d4-a716-446655440033"
                       timestamp: "2026-02-01T12:10:00Z"
         "500":
           description: Internal server error
@@ -359,8 +430,9 @@ paths:
     patch:
       summary: Update a database
       description: >
-        Partially updates a database record. Only mutable fields (owner_team
-        and purpose) can be changed. The database must be active (not deleted).
+        Partially updates a database record. Only mutable fields (ownerTeam
+        and purpose) can be changed. Attempting to change the name returns
+        an IMMUTABLE_FIELD error.
       operationId: updateDatabase
       tags:
         - databases
@@ -383,15 +455,10 @@ paths:
               updateOwner:
                 summary: Change owner team
                 value:
-                  owner_team: backend-team
+                  ownerTeam: backend-team
               updatePurpose:
                 summary: Change purpose
                 value:
-                  purpose: Migrated to support the order service
-              updateBoth:
-                summary: Change both fields
-                value:
-                  owner_team: backend-team
                   purpose: Migrated to support the order service
       responses:
         "200":
@@ -400,37 +467,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DatabaseResponse"
-              examples:
-                updated:
-                  summary: Database after update
-                  value:
-                    data:
-                      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-                      name: my-app-db
-                      owner_team: backend-team
-                      purpose: Migrated to support the order service
-                      namespace: default
-                      cluster_name: cnpg-my-app-db
-                      pooler_name: cnpg-my-app-db-pooler
-                      status: ready
-                      connection:
-                        host: cnpg-my-app-db-pooler.default.svc
-                        port: 5432
-                        dbname: app
-                        username: app
-                        password: "generated-secret"
-                      created_at: "2026-02-01T12:00:00Z"
-                      updated_at: "2026-02-01T14:00:00Z"
-                    error: null
-                    meta:
-                      requestId: "660e8400-e29b-41d4-a716-446655440040"
-                      timestamp: "2026-02-01T14:00:00Z"
         "400":
-          description: Validation error
+          description: Invalid JSON, invalid ID, or immutable field
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ValidationErrorResponse"
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidJson:
+                  summary: Malformed request body
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_JSON
+                      message: Request body must be valid JSON
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440040"
+                      timestamp: "2026-02-01T14:00:00Z"
+                immutableField:
+                  summary: Attempted to change name
+                  value:
+                    data: null
+                    error:
+                      code: IMMUTABLE_FIELD
+                      message: name is immutable
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440041"
+                      timestamp: "2026-02-01T14:00:00Z"
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440042"
+                      timestamp: "2026-02-01T14:00:00Z"
         "404":
           description: Database not found
           content:
@@ -447,9 +520,8 @@ paths:
     delete:
       summary: Delete a database
       description: >
-        Initiates deletion of a database. Sets the status to "deleting" and
-        triggers removal of CNPG Kubernetes resources. The record is soft-deleted
-        (deleted_at is set) once cleanup is complete.
+        Initiates deletion of a database. Removes CNPG Kubernetes resources
+        (Cluster and Pooler) and soft-deletes the database record.
       operationId: deleteDatabase
       tags:
         - databases
@@ -465,6 +537,23 @@ paths:
       responses:
         "204":
           description: Database deletion initiated
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440050"
+                      timestamp: "2026-02-01T15:00:00Z"
         "404":
           description: Database not found
           content:
@@ -478,7 +567,7 @@ paths:
                     data: null
                     error:
                       code: NOT_FOUND
-                      message: "Database not found"
+                      message: Database not found
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440051"
                       timestamp: "2026-02-01T15:00:00Z"
@@ -507,7 +596,7 @@ components:
           type: string
           format: date-time
           description: ISO 8601 timestamp of the response
-          example: "2026-01-15T10:30:00Z"
+          example: "2026-02-10T10:30:00Z"
 
     ResponseError:
       type: object
@@ -518,19 +607,52 @@ components:
         code:
           type: string
           description: Machine-readable error code
+          enum:
+            - INTERNAL_ERROR
+            - INVALID_JSON
+            - INVALID_ID
+            - INVALID_PARAM
+            - VALIDATION_ERROR
+            - DUPLICATE_NAME
+            - IMMUTABLE_FIELD
+            - NOT_FOUND
+            - K8S_ERROR
           example: INTERNAL_ERROR
         message:
           type: string
           description: Human-readable error description
           example: An unexpected error occurred
         details:
-          type: object
-          additionalProperties: true
           description: Optional additional error context
+          oneOf:
+            - $ref: "#/components/schemas/FieldErrors"
+            - type: object
+              additionalProperties: true
+
+    FieldError:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          description: Name of the invalid field
+          example: name
+        message:
+          type: string
+          description: Validation error message for the field
+          example: name is required
+
+    FieldErrors:
+      type: array
+      items:
+        $ref: "#/components/schemas/FieldError"
+      description: Array of per-field validation errors
 
     ListMeta:
       type: object
-      description: Additional metadata for list responses
+      description: Metadata for list responses with pagination
       allOf:
         - $ref: "#/components/schemas/ResponseMeta"
         - type: object
@@ -563,10 +685,21 @@ components:
           description: Whether the API server can reach the Kubernetes API
           example: true
         version:
-          type: string
-          nullable: true
+          type:
+            - string
+            - "null"
           description: Kubernetes server version (null if not connected)
-          example: "1.31.0"
+          example: "v1.31.0"
+
+    DatabaseStatus:
+      type: object
+      required:
+        - connected
+      properties:
+        connected:
+          type: boolean
+          description: Whether the API server can reach the platform database
+          example: true
 
     HealthData:
       type: object
@@ -574,6 +707,7 @@ components:
         - status
         - version
         - kubernetes
+        - database
       properties:
         status:
           type: string
@@ -582,14 +716,16 @@ components:
             - degraded
           description: >
             "healthy" when all dependencies are reachable,
-            "degraded" when the server runs but a dependency is down
+            "degraded" when a dependency is unreachable
           example: healthy
         version:
           type: string
           description: API server version
-          example: 0.1.0
+          example: 0.3.0
         kubernetes:
           $ref: "#/components/schemas/KubernetesStatus"
+        database:
+          $ref: "#/components/schemas/DatabaseStatus"
 
     HealthResponse:
       type: object
@@ -601,7 +737,9 @@ components:
         data:
           $ref: "#/components/schemas/HealthData"
         error:
-          nullable: true
+          type:
+            - object
+            - "null"
           description: Always null on success
           example: null
         meta:
@@ -615,7 +753,9 @@ components:
         - meta
       properties:
         data:
-          nullable: true
+          type:
+            - object
+            - "null"
           description: Always null on error
           example: null
         error:
@@ -624,51 +764,20 @@ components:
           $ref: "#/components/schemas/ResponseMeta"
 
     # --- Database Schemas ---
-    ConnectionDetails:
-      type: object
-      description: PostgreSQL connection details, populated when the database is ready
-      required:
-        - host
-        - port
-        - dbname
-        - username
-        - password
-      properties:
-        host:
-          type: string
-          description: PostgreSQL host (typically the CNPG Pooler service DNS name)
-          example: cnpg-my-app-db-pooler.default.svc
-        port:
-          type: integer
-          description: PostgreSQL port
-          example: 5432
-        dbname:
-          type: string
-          description: PostgreSQL database name
-          example: app
-        username:
-          type: string
-          description: PostgreSQL username
-          example: app
-        password:
-          type: string
-          description: PostgreSQL password
-          example: "generated-secret"
-
     Database:
       type: object
       description: Full database resource representation
       required:
         - id
         - name
-        - owner_team
+        - ownerTeam
         - purpose
         - namespace
-        - cluster_name
-        - pooler_name
+        - clusterName
+        - poolerName
         - status
-        - created_at
-        - updated_at
+        - createdAt
+        - updatedAt
       properties:
         id:
           type: string
@@ -680,7 +789,7 @@ components:
           description: User-provided database name (unique among active databases)
           maxLength: 63
           example: my-app-db
-        owner_team:
+        ownerTeam:
           type: string
           description: Team that owns this database
           example: platform-team
@@ -692,11 +801,11 @@ components:
           type: string
           description: Kubernetes namespace where the CNPG resources are deployed
           example: default
-        cluster_name:
+        clusterName:
           type: string
           description: Name of the CNPG Cluster custom resource
           example: cnpg-my-app-db
-        pooler_name:
+        poolerName:
           type: string
           description: Name of the CNPG Pooler (PgBouncer) custom resource
           example: cnpg-my-app-db-pooler
@@ -710,17 +819,24 @@ components:
             - deleting
             - deleted
           example: ready
-        connection:
-          oneOf:
-            - $ref: "#/components/schemas/ConnectionDetails"
-            - type: "null"
-          description: Connection details (null until the database is ready)
-        created_at:
+        host:
+          type: string
+          description: PostgreSQL host (present only when status is ready)
+          example: cnpg-my-app-db-pooler.default.svc
+        port:
+          type: integer
+          description: PostgreSQL port (present only when status is ready)
+          example: 5432
+        secretName:
+          type: string
+          description: Kubernetes Secret name for credentials (present only when status is ready)
+          example: cnpg-my-app-db-app
+        createdAt:
           type: string
           format: date-time
           description: Record creation timestamp
           example: "2026-02-01T12:00:00Z"
-        updated_at:
+        updatedAt:
           type: string
           format: date-time
           description: Last update timestamp
@@ -731,53 +847,40 @@ components:
       description: Request body for creating a new database
       required:
         - name
-        - owner_team
+        - ownerTeam
       properties:
         name:
           type: string
           description: >
             Database name. Must be unique among active databases. Used as a base
-            for generating Kubernetes resource names. Must comply with RFC 1123
-            (lowercase alphanumeric and hyphens, max 63 characters).
+            for generating Kubernetes resource names. Must be lowercase alphanumeric
+            with hyphens, 3-63 characters, starting with a letter.
           maxLength: 63
-          pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+          pattern: "^[a-z][a-z0-9-]{1,61}[a-z0-9]$"
           example: my-app-db
-        owner_team:
+        ownerTeam:
           type: string
           description: Team that will own this database
-          maxLength: 255
           example: platform-team
         purpose:
           type: string
           description: Free-text description of the database's purpose
           default: ""
           example: Primary database for the user service
-        instances:
-          type: integer
-          description: Number of PostgreSQL instances (CNPG replicas). Defaults to 1.
-          minimum: 1
-          maximum: 10
-          default: 1
-          example: 3
-        storage_size:
+        namespace:
           type: string
-          description: >
-            Storage size for each instance in Kubernetes quantity format
-            (e.g., "1Gi", "10Gi"). Defaults to "1Gi".
-          default: "1Gi"
-          pattern: "^[0-9]+[KMGTPE]i?$"
-          example: "10Gi"
+          description: Kubernetes namespace to deploy CNPG resources (defaults to server config)
+          example: staging
 
     UpdateDatabaseRequest:
       type: object
       description: >
-        Request body for updating a database. At least one field must be provided.
-        Only mutable metadata fields can be updated.
+        Request body for updating a database. Only mutable metadata fields
+        can be updated. Attempting to set name returns IMMUTABLE_FIELD error.
       properties:
-        owner_team:
+        ownerTeam:
           type: string
           description: New owner team
-          maxLength: 255
           example: backend-team
         purpose:
           type: string
@@ -795,7 +898,9 @@ components:
         data:
           $ref: "#/components/schemas/Database"
         error:
-          nullable: true
+          type:
+            - object
+            - "null"
           description: Always null on success
           example: null
         meta:
@@ -814,26 +919,13 @@ components:
           items:
             $ref: "#/components/schemas/Database"
         error:
-          nullable: true
+          type:
+            - object
+            - "null"
           description: Always null on success
           example: null
         meta:
           $ref: "#/components/schemas/ListMeta"
-
-    ValidationErrorDetails:
-      type: object
-      description: Field-level validation error details
-      required:
-        - fields
-      properties:
-        fields:
-          type: object
-          additionalProperties:
-            type: string
-          description: Map of field names to validation error messages
-          example:
-            name: "name is required"
-            owner_team: "owner_team must be at most 255 characters"
 
     ValidationErrorResponse:
       type: object
@@ -844,7 +936,9 @@ components:
         - meta
       properties:
         data:
-          nullable: true
+          type:
+            - object
+            - "null"
           description: Always null on error
           example: null
         error:
@@ -861,8 +955,8 @@ components:
             message:
               type: string
               description: Human-readable summary
-              example: Request validation failed
+              example: Input validation failed
             details:
-              $ref: "#/components/schemas/ValidationErrorDetails"
+              $ref: "#/components/schemas/FieldErrors"
         meta:
           $ref: "#/components/schemas/ResponseMeta"

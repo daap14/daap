@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	specpkg "github.com/daap14/daap/api"
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/config"
@@ -62,12 +63,13 @@ func main() {
 	}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker: checker,
-		DBPinger:   dbPinger,
-		Version:    cfg.Version,
-		Repo:       repo,
-		K8sManager: k8sManager,
-		Namespace:  cfg.Namespace,
+		K8sChecker:  checker,
+		DBPinger:    dbPinger,
+		Version:     cfg.Version,
+		Repo:        repo,
+		K8sManager:  k8sManager,
+		Namespace:   cfg.Namespace,
+		OpenAPISpec: specpkg.OpenAPISpec,
 	})
 
 	// Start reconciler if both repo and k8s manager are available.
