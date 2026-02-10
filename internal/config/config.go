@@ -11,6 +11,7 @@ type Config struct {
 	Namespace          string `envconfig:"NAMESPACE" default:"default"`
 	Version            string `envconfig:"VERSION" default:"dev"`
 	ReconcilerInterval int    `envconfig:"RECONCILER_INTERVAL" default:"10"`
+	BcryptCost         int    `envconfig:"BCRYPT_COST" default:"12"`
 }
 
 // Load reads configuration from environment variables into a Config struct.
