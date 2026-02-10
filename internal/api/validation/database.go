@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-var nameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{1,61}[a-z0-9]$`)
+// NameRegex matches DNS-compatible names: lowercase alphanumeric with hyphens, 3-63 characters,
+// starting with a letter and ending with a letter or digit.
+var NameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{1,61}[a-z0-9]$`)
 
 // FieldError represents a validation error on a specific field.
 type FieldError struct {
@@ -26,7 +28,7 @@ func ValidateCreateRequest(req CreateDatabaseRequest) []FieldError {
 
 	if req.Name == "" {
 		errs = append(errs, FieldError{Field: "name", Message: "name is required"})
-	} else if !nameRegex.MatchString(req.Name) {
+	} else if !NameRegex.MatchString(req.Name) {
 		errs = append(errs, FieldError{Field: "name", Message: "name must be lowercase alphanumeric with hyphens, 3-63 characters, starting with a letter"})
 	} else if strings.Contains(req.Name, "--") {
 		errs = append(errs, FieldError{Field: "name", Message: "name must not contain consecutive hyphens"})
