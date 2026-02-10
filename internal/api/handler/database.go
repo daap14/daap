@@ -90,6 +90,15 @@ func NewDatabaseHandler(repo database.Repository, manager k8s.ResourceManager, n
 	}
 }
 
+// isProductUser returns true if the identity is a product-role user.
+func isProductUser(r *http.Request) (*string, bool) {
+	identity := middleware.GetIdentity(r.Context())
+	if identity != nil && identity.Role != nil && *identity.Role == "product" {
+		return identity.TeamName, true
+	}
+	return nil, false
+}
+
 // Create handles POST /databases.
 func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	requestID := middleware.GetRequestID(r.Context())
@@ -99,6 +108,16 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Err(w, http.StatusBadRequest, "INVALID_JSON", "Request body must be valid JSON", requestID)
 		return
+	}
+
+	// Ownership scoping for product users
+	if teamName, ok := isProductUser(r); ok {
+		if req.OwnerTeam == "" {
+			req.OwnerTeam = *teamName
+		} else if req.OwnerTeam != *teamName {
+			response.Err(w, http.StatusForbidden, "FORBIDDEN", "Cannot create databases for another team", requestID)
+			return
+		}
 	}
 
 	fieldErrors := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
@@ -169,9 +188,13 @@ func (h *DatabaseHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit: 20,
 	}
 
-	if v := r.URL.Query().Get("owner_team"); v != "" {
+	// Ownership scoping: product users only see their own team's databases
+	if teamName, ok := isProductUser(r); ok {
+		filter.OwnerTeam = teamName
+	} else if v := r.URL.Query().Get("owner_team"); v != "" {
 		filter.OwnerTeam = &v
 	}
+
 	if v := r.URL.Query().Get("status"); v != "" {
 		filter.Status = &v
 	}
@@ -232,6 +255,14 @@ func (h *DatabaseHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Product users: return 404 for non-owned databases (no info leakage)
+	if teamName, ok := isProductUser(r); ok {
+		if db.OwnerTeam != *teamName {
+			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
+			return
+		}
+	}
+
 	response.Success(w, http.StatusOK, toDatabaseResponse(db), requestID)
 }
 
@@ -256,6 +287,29 @@ func (h *DatabaseHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Name != nil {
 		response.Err(w, http.StatusBadRequest, "IMMUTABLE_FIELD", "name is immutable", requestID)
 		return
+	}
+
+	// Product users: check ownership and cannot change ownerTeam
+	if teamName, ok := isProductUser(r); ok {
+		if req.OwnerTeam != nil {
+			response.Err(w, http.StatusForbidden, "FORBIDDEN", "Product users cannot change ownerTeam", requestID)
+			return
+		}
+		// Verify ownership
+		existing, err := h.repo.GetByID(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, database.ErrNotFound) {
+				response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
+				return
+			}
+			slog.Error("failed to get database for ownership check", "error", err, "id", id)
+			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update database", requestID)
+			return
+		}
+		if existing.OwnerTeam != *teamName {
+			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
+			return
+		}
 	}
 
 	db, err := h.repo.Update(r.Context(), id, database.UpdateFields{
@@ -295,6 +349,14 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to get database for deletion", "error", err, "id", id)
 		response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete database", requestID)
 		return
+	}
+
+	// Product users: can only delete own databases
+	if teamName, ok := isProductUser(r); ok {
+		if db.OwnerTeam != *teamName {
+			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Database not found", requestID)
+			return
+		}
 	}
 
 	if err := h.manager.DeleteCluster(r.Context(), db.Namespace, db.ClusterName); err != nil {
