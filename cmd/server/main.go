@@ -72,8 +72,11 @@ func main() {
 		userRepo = auth.NewRepository(db.Pool())
 		authService = auth.NewService(userRepo, teamRepo, cfg.BcryptCost)
 
-		if _, err := authService.BootstrapSuperuser(ctx); err != nil {
+		rawKey, err := authService.BootstrapSuperuser(ctx)
+		if err != nil {
 			slog.Error("failed to bootstrap superuser", "error", err)
+		} else if rawKey != "" {
+			slog.Warn("=== SUPERUSER API KEY (save this, it won't be shown again) ===", "key", rawKey)
 		}
 	}
 
