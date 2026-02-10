@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -68,6 +69,8 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		response.ErrWithDetails(w, http.StatusBadRequest, "VALIDATION_ERROR", "Input validation failed", fieldErrors, requestID)
 		return
 	}
+
+	req.Name = strings.TrimSpace(req.Name)
 
 	t := &team.Team{
 		Name: req.Name,
