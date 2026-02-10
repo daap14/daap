@@ -19,6 +19,7 @@ type FieldError struct {
 type CreateDatabaseRequest struct {
 	Name      string
 	OwnerTeam string
+	Tier      string
 }
 
 // ValidateCreateRequest validates the fields of a create database request.
@@ -36,6 +37,10 @@ func ValidateCreateRequest(req CreateDatabaseRequest) []FieldError {
 
 	if req.OwnerTeam == "" {
 		errs = append(errs, FieldError{Field: "ownerTeam", Message: "ownerTeam is required"})
+	}
+
+	if req.Tier == "" {
+		errs = append(errs, FieldError{Field: "tier", Message: "tier is required"})
 	}
 
 	return errs

@@ -22,6 +22,7 @@ func TestValidateName_Valid(t *testing.T) {
 			errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 				Name:      name,
 				OwnerTeam: "team-a",
+				Tier:      "standard",
 			})
 			for _, e := range errs {
 				assert.NotEqual(t, "name", e.Field, "expected no name error for %q, got: %s", name, e.Message)
@@ -38,6 +39,7 @@ func TestValidateName_TooShort(t *testing.T) {
 			errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 				Name:      name,
 				OwnerTeam: "team-a",
+				Tier:      "standard",
 			})
 			hasNameErr := false
 			for _, e := range errs {
@@ -66,6 +68,7 @@ func TestValidateName_TooLong(t *testing.T) {
 	errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 		Name:      longName,
 		OwnerTeam: "team-a",
+		Tier:      "standard",
 	})
 	hasNameErr := false
 	for _, e := range errs {
@@ -91,6 +94,7 @@ func TestValidateName_InvalidChars(t *testing.T) {
 			errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 				Name:      name,
 				OwnerTeam: "team-a",
+				Tier:      "standard",
 			})
 			hasNameErr := false
 			for _, e := range errs {
@@ -116,6 +120,7 @@ func TestValidateName_MustStartWithLetter(t *testing.T) {
 			errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 				Name:      name,
 				OwnerTeam: "team-a",
+				Tier:      "standard",
 			})
 			hasNameErr := false
 			for _, e := range errs {
@@ -133,6 +138,7 @@ func TestValidateRequired_MissingName(t *testing.T) {
 	errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 		Name:      "",
 		OwnerTeam: "team-a",
+		Tier:      "standard",
 	})
 	hasNameErr := false
 	for _, e := range errs {
@@ -149,6 +155,7 @@ func TestValidateRequired_MissingOwnerTeam(t *testing.T) {
 	errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 		Name:      "mydb",
 		OwnerTeam: "",
+		Tier:      "standard",
 	})
 	hasOwnerErr := false
 	for _, e := range errs {
@@ -165,6 +172,7 @@ func TestValidateAll_MultipleErrors(t *testing.T) {
 	errs := validation.ValidateCreateRequest(validation.CreateDatabaseRequest{
 		Name:      "",
 		OwnerTeam: "",
+		Tier:      "",
 	})
 
 	fields := make(map[string]bool)
@@ -174,5 +182,6 @@ func TestValidateAll_MultipleErrors(t *testing.T) {
 
 	assert.True(t, fields["name"], "expected name error")
 	assert.True(t, fields["ownerTeam"], "expected ownerTeam error")
-	assert.GreaterOrEqual(t, len(errs), 2, "expected at least 2 field errors")
+	assert.True(t, fields["tier"], "expected tier error")
+	assert.GreaterOrEqual(t, len(errs), 3, "expected at least 3 field errors")
 }
