@@ -12,9 +12,13 @@ import (
 func TestBuildCluster_AllParamsSet(t *testing.T) {
 	// Arrange
 	params := template.ClusterParams{
-		Name:      "mydb",
-		Namespace: "production",
-		PGVersion: "15",
+		Name:        "mydb",
+		Namespace:   "production",
+		Instances:   3,
+		CPU:         "1",
+		Memory:      "4Gi",
+		StorageSize: "10Gi",
+		PGVersion:   "15",
 	}
 
 	// Act
@@ -32,29 +36,45 @@ func TestBuildCluster_AllParamsSet(t *testing.T) {
 	assert.Equal(t, "daap", labels["app.kubernetes.io/managed-by"])
 	assert.Equal(t, "mydb", labels["daap.io/database"])
 
-	// Assert — spec uses platform defaults for instances and storage
+	// Assert — spec uses provided params
 	spec, ok := cluster.Object["spec"].(map[string]any)
 	require.True(t, ok)
 
-	assert.Equal(t, int64(1), spec["instances"])
+	assert.Equal(t, int64(3), spec["instances"])
 	assert.Equal(t, "ghcr.io/cloudnative-pg/postgresql:15", spec["imageName"])
 
 	storage, ok := spec["storage"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "1Gi", storage["size"])
+	assert.Equal(t, "10Gi", storage["size"])
+
+	resources, ok := spec["resources"].(map[string]any)
+	require.True(t, ok)
+	requests, ok := resources["requests"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "1", requests["cpu"])
+	assert.Equal(t, "4Gi", requests["memory"])
+	limits, ok := resources["limits"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "1", limits["cpu"])
+	assert.Equal(t, "4Gi", limits["memory"])
 }
 
-func TestBuildCluster_Defaults(t *testing.T) {
-	// Arrange — only required fields
+func TestBuildCluster_MinimalParams(t *testing.T) {
+	// Arrange — standard tier-like params
 	params := template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
+		Name:        "testdb",
+		Namespace:   "default",
+		Instances:   1,
+		CPU:         "500m",
+		Memory:      "512Mi",
+		StorageSize: "1Gi",
+		PGVersion:   "16",
 	}
 
 	// Act
 	cluster := template.BuildCluster(params)
 
-	// Assert — defaults applied
+	// Assert
 	spec, ok := cluster.Object["spec"].(map[string]any)
 	require.True(t, ok)
 
@@ -64,13 +84,20 @@ func TestBuildCluster_Defaults(t *testing.T) {
 	storage, ok := spec["storage"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "1Gi", storage["size"])
+	_, hasStorageClass := storage["storageClass"]
+	assert.False(t, hasStorageClass, "empty StorageClass should not produce a storageClass key")
 }
 
-func TestBuildCluster_CustomPGVersion(t *testing.T) {
+func TestBuildCluster_WithStorageClass(t *testing.T) {
 	params := template.ClusterParams{
-		Name:      "analytics",
-		Namespace: "data",
-		PGVersion: "14",
+		Name:         "analytics",
+		Namespace:    "data",
+		Instances:    2,
+		CPU:          "2",
+		Memory:       "8Gi",
+		StorageSize:  "100Gi",
+		StorageClass: "fast-ssd",
+		PGVersion:    "17",
 	}
 
 	cluster := template.BuildCluster(params)
@@ -78,12 +105,13 @@ func TestBuildCluster_CustomPGVersion(t *testing.T) {
 	spec, ok := cluster.Object["spec"].(map[string]any)
 	require.True(t, ok)
 
-	assert.Equal(t, int64(1), spec["instances"])
-	assert.Equal(t, "ghcr.io/cloudnative-pg/postgresql:14", spec["imageName"])
+	assert.Equal(t, int64(2), spec["instances"])
+	assert.Equal(t, "ghcr.io/cloudnative-pg/postgresql:17", spec["imageName"])
 
 	storage, ok := spec["storage"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "1Gi", storage["size"])
+	assert.Equal(t, "100Gi", storage["size"])
+	assert.Equal(t, "fast-ssd", storage["storageClass"])
 }
 
 func TestBuildCluster_NamingConvention(t *testing.T) {
@@ -99,8 +127,13 @@ func TestBuildCluster_NamingConvention(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.inputName, func(t *testing.T) {
 			params := template.ClusterParams{
-				Name:      tt.inputName,
-				Namespace: "default",
+				Name:        tt.inputName,
+				Namespace:   "default",
+				Instances:   1,
+				CPU:         "500m",
+				Memory:      "512Mi",
+				StorageSize: "1Gi",
+				PGVersion:   "16",
 			}
 
 			cluster := template.BuildCluster(params)

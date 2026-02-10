@@ -175,9 +175,15 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO(v0.5): replace hardcoded defaults with tier params once handler accepts tier
 	cluster := template.BuildCluster(template.ClusterParams{
-		Name:      db.Name,
-		Namespace: db.Namespace,
+		Name:        db.Name,
+		Namespace:   db.Namespace,
+		Instances:   1,
+		CPU:         "500m",
+		Memory:      "512Mi",
+		StorageSize: "1Gi",
+		PGVersion:   "16",
 	})
 
 	if err := h.manager.ApplyCluster(r.Context(), cluster); err != nil {
