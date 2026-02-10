@@ -11,7 +11,9 @@ type Database struct {
 	ID            uuid.UUID
 	Name          string
 	OwnerTeamID   uuid.UUID
-	OwnerTeamName string // transient, populated via JOIN
+	OwnerTeamName string     // transient, populated via JOIN
+	TierID        *uuid.UUID // nullable for pre-v0.5 databases
+	TierName      string     // transient, populated via JOIN
 	Purpose       string
 	Namespace     string
 	ClusterName   string
