@@ -81,6 +81,26 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 					r.Delete("/databases/{id}", dbHandler.Delete)
 				})
 			}
+
+			// Tier routes
+			if deps.TierRepo != nil {
+				tierHandler := handler.NewTierHandler(deps.TierRepo)
+
+				// Read-only tier routes (platform + product)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireRole("platform", "product"))
+					r.Get("/tiers", tierHandler.List)
+					r.Get("/tiers/{id}", tierHandler.GetByID)
+				})
+
+				// Tier management routes (platform only)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireRole("platform"))
+					r.Post("/tiers", tierHandler.Create)
+					r.Patch("/tiers/{id}", tierHandler.Update)
+					r.Delete("/tiers/{id}", tierHandler.Delete)
+				})
+			}
 		})
 	} else {
 		// Fallback: no auth service — register database routes without auth (graceful degradation)
