@@ -15,6 +15,7 @@ CNPG_VERSION         := 1.25.1
 GOLANGCI_LINT_VERSION := v2.8.0
 AIR                  := $(shell go env GOPATH)/bin/air
 GOLANGCI_LINT        := $(shell go env GOPATH)/bin/golangci-lint
+VACUUM               := $(shell go env GOPATH)/bin/vacuum
 DATABASE_URL         ?= postgres://daap:daap@localhost:5432/daap?sslmode=disable
 MIGRATIONS_DIR       := migrations
 
@@ -89,6 +90,14 @@ lint: ## Run golangci-lint
 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(shell go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); \
 	fi
 	$(GOLANGCI_LINT) run ./...
+
+.PHONY: lint-openapi
+lint-openapi: ## Lint OpenAPI spec
+	@if ! command -v $(VACUUM) >/dev/null 2>&1; then \
+		echo "Installing vacuum..."; \
+		$(GO) install github.com/daveshanley/vacuum@latest; \
+	fi
+	$(VACUUM) lint api/openapi.yaml
 
 .PHONY: fmt
 fmt: ## Format Go source files
