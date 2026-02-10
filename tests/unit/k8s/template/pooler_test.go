@@ -12,9 +12,11 @@ import (
 func TestBuildPooler_GVKAndMetadata(t *testing.T) {
 	// Arrange
 	params := template.PoolerParams{
-		Name:        "mydb",
-		Namespace:   "production",
-		ClusterName: "daap-mydb",
+		Name:           "mydb",
+		Namespace:      "production",
+		ClusterName:    "daap-mydb",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
 	}
 
 	// Act
@@ -36,9 +38,11 @@ func TestBuildPooler_GVKAndMetadata(t *testing.T) {
 func TestBuildPooler_Spec(t *testing.T) {
 	// Arrange
 	params := template.PoolerParams{
-		Name:        "orders",
-		Namespace:   "staging",
-		ClusterName: "daap-orders",
+		Name:           "orders",
+		Namespace:      "staging",
+		ClusterName:    "daap-orders",
+		PoolMode:       "session",
+		MaxConnections: 200,
 	}
 
 	// Act
@@ -59,7 +63,34 @@ func TestBuildPooler_Spec(t *testing.T) {
 	// PgBouncer config
 	pgbouncer, ok := spec["pgbouncer"].(map[string]any)
 	require.True(t, ok)
+	assert.Equal(t, "session", pgbouncer["poolMode"])
+
+	parameters, ok := pgbouncer["parameters"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "200", parameters["default_pool_size"])
+}
+
+func TestBuildPooler_TransactionMode(t *testing.T) {
+	params := template.PoolerParams{
+		Name:           "txdb",
+		Namespace:      "default",
+		ClusterName:    "daap-txdb",
+		PoolMode:       "transaction",
+		MaxConnections: 50,
+	}
+
+	pooler := template.BuildPooler(params)
+
+	spec, ok := pooler.Object["spec"].(map[string]any)
+	require.True(t, ok)
+
+	pgbouncer, ok := spec["pgbouncer"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, "transaction", pgbouncer["poolMode"])
+
+	parameters, ok := pgbouncer["parameters"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "50", parameters["default_pool_size"])
 }
 
 func TestBuildPooler_NamingConvention(t *testing.T) {
@@ -75,9 +106,11 @@ func TestBuildPooler_NamingConvention(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.inputName, func(t *testing.T) {
 			params := template.PoolerParams{
-				Name:        tt.inputName,
-				Namespace:   "default",
-				ClusterName: "daap-" + tt.inputName,
+				Name:           tt.inputName,
+				Namespace:      "default",
+				ClusterName:    "daap-" + tt.inputName,
+				PoolMode:       "transaction",
+				MaxConnections: 100,
 			}
 
 			pooler := template.BuildPooler(params)

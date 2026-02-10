@@ -51,16 +51,26 @@ func newTestManager(objects ...runtime.Object) (*Manager, *dynamicfake.FakeDynam
 	return mgr, fakeClient
 }
 
+// testClusterParams returns ClusterParams with all required fields for tests.
+func testClusterParams(name, namespace string) template.ClusterParams {
+	return template.ClusterParams{
+		Name:        name,
+		Namespace:   namespace,
+		Instances:   1,
+		CPU:         "500m",
+		Memory:      "512Mi",
+		StorageSize: "1Gi",
+		PGVersion:   "16",
+	}
+}
+
 // --- ApplyCluster Tests ---
 
 func TestApplyCluster_Create(t *testing.T) {
 	mgr, fakeClient := newTestManager()
 	ctx := context.Background()
 
-	cluster := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-	})
+	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
 
 	err := mgr.ApplyCluster(ctx, cluster)
 	require.NoError(t, err)
@@ -75,18 +85,13 @@ func TestApplyCluster_Create(t *testing.T) {
 func TestApplyCluster_UpdateExisting(t *testing.T) {
 	ctx := context.Background()
 
-	existing := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-	})
+	existing := template.BuildCluster(testClusterParams("testdb", "default"))
 
 	mgr, fakeClient := newTestManager(existing)
 
-	updated := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-		PGVersion: "15",
-	})
+	updatedParams := testClusterParams("testdb", "default")
+	updatedParams.PGVersion = "15"
+	updated := template.BuildCluster(updatedParams)
 
 	err := mgr.ApplyCluster(ctx, updated)
 	require.NoError(t, err)
@@ -109,10 +114,7 @@ func TestApplyCluster_Error(t *testing.T) {
 		return true, nil, assert.AnError
 	})
 
-	cluster := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-	})
+	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
 
 	err := mgr.ApplyCluster(ctx, cluster)
 	assert.Error(t, err)
@@ -125,9 +127,11 @@ func TestApplyPooler_Create(t *testing.T) {
 	ctx := context.Background()
 
 	pooler := template.BuildPooler(template.PoolerParams{
-		Name:        "testdb",
-		Namespace:   "default",
-		ClusterName: "daap-testdb",
+		Name:           "testdb",
+		Namespace:      "default",
+		ClusterName:    "daap-testdb",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
 	})
 
 	err := mgr.ApplyPooler(ctx, pooler)
@@ -144,10 +148,7 @@ func TestApplyPooler_Create(t *testing.T) {
 func TestDeleteCluster_Success(t *testing.T) {
 	ctx := context.Background()
 
-	existing := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-	})
+	existing := template.BuildCluster(testClusterParams("testdb", "default"))
 
 	mgr, _ := newTestManager(existing)
 
@@ -182,9 +183,11 @@ func TestDeletePooler_Success(t *testing.T) {
 	ctx := context.Background()
 
 	existing := template.BuildPooler(template.PoolerParams{
-		Name:        "testdb",
-		Namespace:   "default",
-		ClusterName: "daap-testdb",
+		Name:           "testdb",
+		Namespace:      "default",
+		ClusterName:    "daap-testdb",
+		PoolMode:       "transaction",
+		MaxConnections: 100,
 	})
 
 	mgr, _ := newTestManager(existing)
@@ -218,10 +221,7 @@ func TestDeletePooler_Error(t *testing.T) {
 func TestGetClusterStatus_Ready(t *testing.T) {
 	ctx := context.Background()
 
-	cluster := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-	})
+	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
 	cluster.Object["status"] = map[string]any{
 		"phase": "Cluster in healthy state",
 	}
@@ -237,10 +237,7 @@ func TestGetClusterStatus_Ready(t *testing.T) {
 func TestGetClusterStatus_NotReady(t *testing.T) {
 	ctx := context.Background()
 
-	cluster := template.BuildCluster(template.ClusterParams{
-		Name:      "testdb",
-		Namespace: "default",
-	})
+	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
 	cluster.Object["status"] = map[string]any{
 		"phase": "Setting up primary",
 	}

@@ -6,29 +6,31 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// Platform defaults for CNPG cluster resources.
-const (
-	defaultInstances   = 1
-	defaultStorageSize = "1Gi"
-	defaultPGVersion   = "16"
-)
-
 // ClusterParams configures a CNPG Cluster resource.
+// All fields must be explicitly provided — there are no silent defaults.
 type ClusterParams struct {
-	Name      string
-	Namespace string
-	PGVersion string // e.g., "16"
+	Name         string
+	Namespace    string
+	Instances    int    // CNPG cluster replica count
+	CPU          string // K8s resource quantity (e.g., "500m", "2")
+	Memory       string // K8s resource quantity (e.g., "512Mi", "4Gi")
+	StorageSize  string // K8s storage size (e.g., "1Gi", "100Gi")
+	StorageClass string // K8s StorageClass name; empty = cluster default
+	PGVersion    string // PostgreSQL major version (e.g., "16")
 }
 
 // BuildCluster creates an unstructured CNPG Cluster resource from the given parameters.
-// Instances and StorageSize are platform defaults and not configurable by consumers.
+// All infrastructure values come from the tier — no hardcoded defaults.
 func BuildCluster(params ClusterParams) *unstructured.Unstructured {
-	if params.PGVersion == "" {
-		params.PGVersion = defaultPGVersion
-	}
-
 	name := fmt.Sprintf("daap-%s", params.Name)
 	imageName := fmt.Sprintf("ghcr.io/cloudnative-pg/postgresql:%s", params.PGVersion)
+
+	storage := map[string]any{
+		"size": params.StorageSize,
+	}
+	if params.StorageClass != "" {
+		storage["storageClass"] = params.StorageClass
+	}
 
 	cluster := &unstructured.Unstructured{
 		Object: map[string]any{
@@ -43,11 +45,19 @@ func BuildCluster(params ClusterParams) *unstructured.Unstructured {
 				},
 			},
 			"spec": map[string]any{
-				"instances":  int64(defaultInstances),
+				"instances":  int64(params.Instances),
 				"imageName":  imageName,
 				"postgresql": map[string]any{},
-				"storage": map[string]any{
-					"size": defaultStorageSize,
+				"storage":    storage,
+				"resources": map[string]any{
+					"requests": map[string]any{
+						"cpu":    params.CPU,
+						"memory": params.Memory,
+					},
+					"limits": map[string]any{
+						"cpu":    params.CPU,
+						"memory": params.Memory,
+					},
 				},
 			},
 		},
