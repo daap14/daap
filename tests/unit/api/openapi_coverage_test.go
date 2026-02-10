@@ -17,8 +17,10 @@ import (
 
 	specpkg "github.com/daap14/daap/api"
 	"github.com/daap14/daap/internal/api"
+	"github.com/daap14/daap/internal/auth"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/team"
 )
 
 // openAPISpec is the minimal structure needed to extract paths from the spec.
@@ -68,6 +70,24 @@ func (n *noopManager) GetSecret(_ context.Context, _, _ string) (map[string][]by
 	return nil, nil
 }
 
+type noopTeamRepo struct{}
+
+func (n *noopTeamRepo) Create(_ context.Context, _ *team.Team) error               { return nil }
+func (n *noopTeamRepo) GetByID(_ context.Context, _ uuid.UUID) (*team.Team, error) { return nil, nil }
+func (n *noopTeamRepo) List(_ context.Context) ([]team.Team, error)                { return nil, nil }
+func (n *noopTeamRepo) Delete(_ context.Context, _ uuid.UUID) error                { return nil }
+
+type noopUserRepo struct{}
+
+func (n *noopUserRepo) Create(_ context.Context, _ *auth.User) error               { return nil }
+func (n *noopUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*auth.User, error) { return nil, nil }
+func (n *noopUserRepo) FindByPrefix(_ context.Context, _ string) ([]auth.User, error) {
+	return nil, nil
+}
+func (n *noopUserRepo) List(_ context.Context) ([]auth.User, error) { return nil, nil }
+func (n *noopUserRepo) Revoke(_ context.Context, _ uuid.UUID) error { return nil }
+func (n *noopUserRepo) CountAll(_ context.Context) (int, error)     { return 0, nil }
+
 // --- Test ---
 
 func TestOpenAPISpec_RoutesCoverAllPaths(t *testing.T) {
@@ -85,11 +105,18 @@ func TestOpenAPISpec_RoutesCoverAllPaths(t *testing.T) {
 	require.NotEmpty(t, specRoutes, "spec should define at least one route")
 
 	// Build a router with noop deps so all routes are registered
+	teamRepo := &noopTeamRepo{}
+	userRepo := &noopUserRepo{}
+	authService := auth.NewService(userRepo, teamRepo, 4)
+
 	router := api.NewRouter(api.RouterDeps{
 		K8sChecker:  &noopHealthChecker{},
 		OpenAPISpec: specpkg.OpenAPISpec,
 		Repo:        &noopRepo{},
 		K8sManager:  &noopManager{},
+		AuthService: authService,
+		TeamRepo:    teamRepo,
+		UserRepo:    userRepo,
 	})
 
 	chiRoutes := extractChiRoutes(t, router)

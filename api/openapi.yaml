@@ -2,13 +2,16 @@ openapi: "3.1.0"
 info:
   title: DAAP API
   description: Database as a Service platform API
-  version: 0.3.0
+  version: 0.4.0
   license:
     name: MIT
 
 servers:
   - url: http://localhost:8080
     description: Local development
+
+security:
+  - ApiKeyAuth: []
 
 paths:
   /health:
@@ -21,6 +24,7 @@ paths:
       operationId: getHealth
       tags:
         - system
+      security: []
       responses:
         "200":
           description: Server is healthy or degraded
@@ -34,7 +38,7 @@ paths:
                   value:
                     data:
                       status: healthy
-                      version: 0.3.0
+                      version: 0.4.0
                       kubernetes:
                         connected: true
                         version: "v1.31.0"
@@ -49,7 +53,7 @@ paths:
                   value:
                     data:
                       status: degraded
-                      version: 0.3.0
+                      version: 0.4.0
                       kubernetes:
                         connected: false
                         version: null
@@ -73,6 +77,7 @@ paths:
       operationId: getOpenAPISpec
       tags:
         - system
+      security: []
       responses:
         "200":
           description: OpenAPI specification in JSON format
@@ -87,6 +92,573 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /teams:
+    post:
+      summary: Create a team
+      description: >
+        Creates a new team with the given name and role. Teams group users
+        and determine their access level. Superuser-only.
+      operationId: createTeam
+      tags:
+        - teams
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+            examples:
+              platformTeam:
+                summary: Create a platform team
+                value:
+                  name: ops
+                  role: platform
+              productTeam:
+                summary: Create a product team
+                value:
+                  name: frontend
+                  role: product
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamResponse"
+              examples:
+                created:
+                  summary: Team created successfully
+                  value:
+                    data:
+                      id: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+                      name: ops
+                      role: platform
+                      createdAt: "2026-02-10T12:00:00Z"
+                      updatedAt: "2026-02-10T12:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440100"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "400":
+          description: Validation error or invalid JSON
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingFields:
+                  summary: Required fields missing
+                  value:
+                    data: null
+                    error:
+                      code: VALIDATION_ERROR
+                      message: Input validation failed
+                      details:
+                        - field: name
+                          message: "name is required"
+                        - field: role
+                          message: "role is required"
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440101"
+                      timestamp: "2026-02-10T12:00:00Z"
+                invalidJson:
+                  summary: Malformed request body
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_JSON
+                      message: Request body must be valid JSON
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440102"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unauthorized:
+                  summary: No API key provided
+                  value:
+                    data: null
+                    error:
+                      code: UNAUTHORIZED
+                      message: API key is required
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440103"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbidden:
+                  summary: Non-superuser attempted team management
+                  value:
+                    data: null
+                    error:
+                      code: FORBIDDEN
+                      message: Superuser access required
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440104"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "409":
+          description: Team name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                duplicate:
+                  summary: Duplicate team name
+                  value:
+                    data: null
+                    error:
+                      code: DUPLICATE_NAME
+                      message: "A team named \"ops\" already exists"
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440105"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: List teams
+      description: >
+        Returns all teams. No pagination — team count is expected to be small.
+        Superuser-only.
+      operationId: listTeams
+      tags:
+        - teams
+      responses:
+        "200":
+          description: List of teams
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamListResponse"
+              examples:
+                withResults:
+                  summary: Teams found
+                  value:
+                    data:
+                      - id: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+                        name: ops
+                        role: platform
+                        createdAt: "2026-02-10T12:00:00Z"
+                        updatedAt: "2026-02-10T12:00:00Z"
+                      - id: "c2d3e4f5-a6b7-8901-cdef-234567890123"
+                        name: frontend
+                        role: product
+                        createdAt: "2026-02-10T12:01:00Z"
+                        updatedAt: "2026-02-10T12:01:00Z"
+                    error: null
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440110"
+                      timestamp: "2026-02-10T12:05:00Z"
+                      total: 2
+                      page: 1
+                      limit: 100
+                emptyResults:
+                  summary: No teams found
+                  value:
+                    data: []
+                    error: null
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440111"
+                      timestamp: "2026-02-10T12:05:00Z"
+                      total: 0
+                      page: 1
+                      limit: 100
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /teams/{id}:
+    delete:
+      summary: Delete a team
+      description: >
+        Deletes a team by ID. Fails if the team has active (non-revoked)
+        users. Superuser-only.
+      operationId: deleteTeam
+      tags:
+        - teams
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Team UUID
+          schema:
+            type: string
+            format: uuid
+          example: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+      responses:
+        "204":
+          description: Team deleted
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440120"
+                      timestamp: "2026-02-10T12:10:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  summary: No team with this ID
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: Team not found
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440121"
+                      timestamp: "2026-02-10T12:10:00Z"
+        "409":
+          description: Team has active users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                teamHasUsers:
+                  summary: Cannot delete team with users
+                  value:
+                    data: null
+                    error:
+                      code: TEAM_HAS_USERS
+                      message: Cannot delete team with active users
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440122"
+                      timestamp: "2026-02-10T12:10:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /users:
+    post:
+      summary: Create a user
+      description: >
+        Creates a new user in the specified team and generates an API key.
+        The raw API key is returned only in this response — it cannot be
+        retrieved later. Superuser-only.
+      operationId: createUser
+      tags:
+        - users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+            examples:
+              createUser:
+                summary: Create a user in a team
+                value:
+                  name: alice
+                  teamId: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+      responses:
+        "201":
+          description: User created with API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserWithApiKeyResponse"
+              examples:
+                created:
+                  summary: User created successfully
+                  value:
+                    data:
+                      id: "d4e5f6a7-b8c9-0123-def0-456789abcdef"
+                      name: alice
+                      teamId: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+                      teamName: ops
+                      role: platform
+                      apiKey: "daap_abc123def456ghi789jkl012mno345pqr678stu"
+                      createdAt: "2026-02-10T12:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440200"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "400":
+          description: Validation error or invalid JSON
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingFields:
+                  summary: Required fields missing
+                  value:
+                    data: null
+                    error:
+                      code: VALIDATION_ERROR
+                      message: Input validation failed
+                      details:
+                        - field: name
+                          message: "name is required"
+                        - field: teamId
+                          message: "teamId is required"
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440201"
+                      timestamp: "2026-02-10T12:00:00Z"
+                invalidJson:
+                  summary: Malformed request body
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_JSON
+                      message: Request body must be valid JSON
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440202"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                teamNotFound:
+                  summary: Referenced team does not exist
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: Team not found
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440203"
+                      timestamp: "2026-02-10T12:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: List users
+      description: >
+        Returns all users with metadata. Never includes the raw API key or
+        hash — only the prefix for identification. Superuser-only.
+      operationId: listUsers
+      tags:
+        - users
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+              examples:
+                withResults:
+                  summary: Users found
+                  value:
+                    data:
+                      - id: "d4e5f6a7-b8c9-0123-def0-456789abcdef"
+                        name: alice
+                        teamId: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+                        teamName: ops
+                        role: platform
+                        apiKeyPrefix: "daap_abc"
+                        isSuperuser: false
+                        createdAt: "2026-02-10T12:00:00Z"
+                      - id: "e5f6a7b8-c9d0-1234-ef01-567890abcdef"
+                        name: superuser
+                        apiKeyPrefix: "daap_xyz"
+                        isSuperuser: true
+                        createdAt: "2026-02-10T11:00:00Z"
+                    error: null
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440210"
+                      timestamp: "2026-02-10T12:05:00Z"
+                      total: 2
+                      page: 1
+                      limit: 100
+                emptyResults:
+                  summary: No users found
+                  value:
+                    data: []
+                    error: null
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440211"
+                      timestamp: "2026-02-10T12:05:00Z"
+                      total: 0
+                      page: 1
+                      limit: 100
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /users/{id}:
+    delete:
+      summary: Revoke a user
+      description: >
+        Soft-revokes a user by setting revoked_at. The user's API key becomes
+        invalid immediately. Cannot revoke the superuser. Superuser-only.
+      operationId: revokeUser
+      tags:
+        - users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User UUID
+          schema:
+            type: string
+            format: uuid
+          example: "d4e5f6a7-b8c9-0123-def0-456789abcdef"
+      responses:
+        "204":
+          description: User revoked
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: ID is not a valid UUID
+                  value:
+                    data: null
+                    error:
+                      code: INVALID_ID
+                      message: id must be a valid UUID
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440220"
+                      timestamp: "2026-02-10T12:10:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Cannot revoke the superuser
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                cannotRevokeSuperuser:
+                  summary: Superuser cannot be revoked
+                  value:
+                    data: null
+                    error:
+                      code: FORBIDDEN
+                      message: Cannot revoke the superuser
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440221"
+                      timestamp: "2026-02-10T12:10:00Z"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  summary: No user with this ID
+                  value:
+                    data: null
+                    error:
+                      code: NOT_FOUND
+                      message: User not found
+                    meta:
+                      requestId: "770e8400-e29b-41d4-a716-446655440222"
+                      timestamp: "2026-02-10T12:10:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /databases:
     post:
       summary: Create a new database
@@ -94,6 +666,7 @@ paths:
         Submits a request to provision a new CNPG-backed PostgreSQL database.
         The database is created in "provisioning" status and will transition to
         "ready" once the CNPG Cluster and Pooler are available on Kubernetes.
+        Requires platform or product role.
       operationId: createDatabase
       tags:
         - databases
@@ -176,6 +749,29 @@ paths:
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440012"
                       timestamp: "2026-02-01T12:00:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbidden:
+                  summary: Superuser or wrong team
+                  value:
+                    data: null
+                    error:
+                      code: FORBIDDEN
+                      message: Insufficient permissions
+                    meta:
+                      requestId: "660e8400-e29b-41d4-a716-446655440014"
+                      timestamp: "2026-02-01T12:00:00Z"
         "409":
           description: Database name already exists
           content:
@@ -205,6 +801,8 @@ paths:
       description: >
         Returns a paginated list of databases, optionally filtered by owner team,
         status, or name. Only active (non-deleted) databases are returned.
+        Product users see only their own team's databases.
+        Requires platform or product role.
       operationId: listDatabases
       tags:
         - databases
@@ -314,6 +912,18 @@ paths:
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440022"
                       timestamp: "2026-02-01T12:10:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -326,7 +936,8 @@ paths:
       summary: Get a database by ID
       description: >
         Returns the full details of a single database, including connection
-        details if the database is in "ready" status.
+        details if the database is in "ready" status. Product users can only
+        see their own team's databases. Requires platform or product role.
       operationId: getDatabase
       tags:
         - databases
@@ -403,6 +1014,18 @@ paths:
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440032"
                       timestamp: "2026-02-01T12:10:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Database not found
           content:
@@ -432,7 +1055,8 @@ paths:
       description: >
         Partially updates a database record. Only mutable fields (ownerTeam
         and purpose) can be changed. Attempting to change the name returns
-        an IMMUTABLE_FIELD error.
+        an IMMUTABLE_FIELD error. Product users cannot change ownerTeam.
+        Requires platform or product role.
       operationId: updateDatabase
       tags:
         - databases
@@ -504,6 +1128,18 @@ paths:
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440042"
                       timestamp: "2026-02-01T14:00:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Database not found
           content:
@@ -522,6 +1158,8 @@ paths:
       description: >
         Initiates deletion of a database. Removes CNPG Kubernetes resources
         (Cluster and Pooler) and soft-deletes the database record.
+        Product users can only delete their own team's databases.
+        Requires platform or product role.
       operationId: deleteDatabase
       tags:
         - databases
@@ -554,6 +1192,18 @@ paths:
                     meta:
                       requestId: "660e8400-e29b-41d4-a716-446655440050"
                       timestamp: "2026-02-01T15:00:00Z"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Database not found
           content:
@@ -579,6 +1229,13 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication. Pass in the X-API-Key header.
+
   schemas:
     # --- Response Envelope ---
     ResponseMeta:
@@ -617,6 +1274,9 @@ components:
             - IMMUTABLE_FIELD
             - NOT_FOUND
             - K8S_ERROR
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - TEAM_HAS_USERS
           example: INTERNAL_ERROR
         message:
           type: string
@@ -721,7 +1381,7 @@ components:
         version:
           type: string
           description: API server version
-          example: 0.3.0
+          example: 0.4.0
         kubernetes:
           $ref: "#/components/schemas/KubernetesStatus"
         database:
@@ -762,6 +1422,287 @@ components:
           $ref: "#/components/schemas/ResponseError"
         meta:
           $ref: "#/components/schemas/ResponseMeta"
+
+    # --- Team Schemas ---
+    Team:
+      type: object
+      description: Team resource representation
+      required:
+        - id
+        - name
+        - role
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique team identifier
+          example: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+        name:
+          type: string
+          description: Team name (unique)
+          maxLength: 255
+          example: ops
+        role:
+          type: string
+          description: Team role determining access level
+          enum:
+            - platform
+            - product
+          example: platform
+        createdAt:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-02-10T12:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-02-10T12:00:00Z"
+
+    CreateTeamRequest:
+      type: object
+      description: Request body for creating a new team
+      required:
+        - name
+        - role
+      properties:
+        name:
+          type: string
+          description: Team name (must be unique)
+          maxLength: 255
+          example: ops
+        role:
+          type: string
+          description: Team role
+          enum:
+            - platform
+            - product
+          example: platform
+
+    TeamResponse:
+      type: object
+      description: Single team response envelope
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/Team"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    TeamListResponse:
+      type: object
+      description: Team list response envelope with pagination metadata
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Team"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ListMeta"
+
+    # --- User Schemas ---
+    User:
+      type: object
+      description: User metadata representation (never includes raw key or hash)
+      required:
+        - id
+        - name
+        - apiKeyPrefix
+        - isSuperuser
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique user identifier
+          example: "d4e5f6a7-b8c9-0123-def0-456789abcdef"
+        name:
+          type: string
+          description: User name
+          maxLength: 255
+          example: alice
+        teamId:
+          type: string
+          format: uuid
+          description: Team ID (absent for superuser)
+          example: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+        teamName:
+          type: string
+          description: Team name (absent for superuser)
+          example: ops
+        role:
+          type: string
+          description: Team role (absent for superuser)
+          enum:
+            - platform
+            - product
+          example: platform
+        apiKeyPrefix:
+          type: string
+          description: First 8 characters of the API key (for identification)
+          example: "daap_abc"
+        isSuperuser:
+          type: boolean
+          description: Whether this user is the superuser
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-02-10T12:00:00Z"
+        revokedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: Revocation timestamp (null if active)
+          example: null
+
+    UserWithApiKey:
+      type: object
+      description: User creation response including the raw API key (shown only once)
+      required:
+        - id
+        - name
+        - teamId
+        - teamName
+        - role
+        - apiKey
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique user identifier
+          example: "d4e5f6a7-b8c9-0123-def0-456789abcdef"
+        name:
+          type: string
+          description: User name
+          example: alice
+        teamId:
+          type: string
+          format: uuid
+          description: Team ID
+          example: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+        teamName:
+          type: string
+          description: Team name
+          example: ops
+        role:
+          type: string
+          description: Team role
+          enum:
+            - platform
+            - product
+          example: platform
+        apiKey:
+          type: string
+          description: Raw API key (only returned at creation time)
+          example: "daap_abc123def456ghi789jkl012mno345pqr678stu"
+        createdAt:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-02-10T12:00:00Z"
+
+    CreateUserRequest:
+      type: object
+      description: Request body for creating a new user
+      required:
+        - name
+        - teamId
+      properties:
+        name:
+          type: string
+          description: User name
+          maxLength: 255
+          example: alice
+        teamId:
+          type: string
+          format: uuid
+          description: Team ID the user belongs to
+          example: "b1c2d3e4-f5a6-7890-bcde-f12345678901"
+
+    UserResponse:
+      type: object
+      description: Single user metadata response envelope
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/User"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    UserWithApiKeyResponse:
+      type: object
+      description: User creation response envelope (includes raw API key)
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/UserWithApiKey"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    UserListResponse:
+      type: object
+      description: User list response envelope with pagination metadata
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ListMeta"
 
     # --- Database Schemas ---
     Database:
@@ -960,3 +1901,13 @@ components:
               $ref: "#/components/schemas/FieldErrors"
         meta:
           $ref: "#/components/schemas/ResponseMeta"
+
+tags:
+  - name: system
+    description: System endpoints (health, OpenAPI spec)
+  - name: teams
+    description: Team management (superuser-only)
+  - name: users
+    description: User management (superuser-only)
+  - name: databases
+    description: Database lifecycle management (platform and product roles)
