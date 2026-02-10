@@ -18,10 +18,10 @@ import (
 // --- Mock Team Repository ---
 
 type mockTeamRepo struct {
-	createFn func(ctx context.Context, t *team.Team) error
+	createFn  func(ctx context.Context, t *team.Team) error
 	getByIDFn func(ctx context.Context, id uuid.UUID) (*team.Team, error)
-	listFn   func(ctx context.Context) ([]team.Team, error)
-	deleteFn func(ctx context.Context, id uuid.UUID) error
+	listFn    func(ctx context.Context) ([]team.Team, error)
+	deleteFn  func(ctx context.Context, id uuid.UUID) error
 }
 
 func (m *mockTeamRepo) Create(ctx context.Context, t *team.Team) error {

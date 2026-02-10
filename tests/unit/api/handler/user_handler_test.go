@@ -19,12 +19,12 @@ import (
 // --- Mock User Repository ---
 
 type mockUserRepo struct {
-	createFn     func(ctx context.Context, u *auth.User) error
-	getByIDFn    func(ctx context.Context, id uuid.UUID) (*auth.User, error)
+	createFn       func(ctx context.Context, u *auth.User) error
+	getByIDFn      func(ctx context.Context, id uuid.UUID) (*auth.User, error)
 	findByPrefixFn func(ctx context.Context, prefix string) ([]auth.User, error)
-	listFn       func(ctx context.Context) ([]auth.User, error)
-	revokeFn     func(ctx context.Context, id uuid.UUID) error
-	countAllFn   func(ctx context.Context) (int, error)
+	listFn         func(ctx context.Context) ([]auth.User, error)
+	revokeFn       func(ctx context.Context, id uuid.UUID) error
+	countAllFn     func(ctx context.Context) (int, error)
 }
 
 func (m *mockUserRepo) Create(ctx context.Context, u *auth.User) error {
