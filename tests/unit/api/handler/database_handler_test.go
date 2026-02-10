@@ -15,22 +15,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // --- Mock Repository ---
 
 type mockRepo struct {
-	createFn      func(ctx context.Context, db *database.Database) error
-	getByIDFn     func(ctx context.Context, id uuid.UUID) (*database.Database, error)
-	listFn        func(ctx context.Context, filter database.ListFilter) (*database.ListResult, error)
-	updateFn      func(ctx context.Context, id uuid.UUID, fields database.UpdateFields) (*database.Database, error)
+	createFn       func(ctx context.Context, db *database.Database) error
+	getByIDFn      func(ctx context.Context, id uuid.UUID) (*database.Database, error)
+	listFn         func(ctx context.Context, filter database.ListFilter) (*database.ListResult, error)
+	updateFn       func(ctx context.Context, id uuid.UUID, fields database.UpdateFields) (*database.Database, error)
 	updateStatusFn func(ctx context.Context, id uuid.UUID, su database.StatusUpdate) (*database.Database, error)
-	softDeleteFn  func(ctx context.Context, id uuid.UUID) error
+	softDeleteFn   func(ctx context.Context, id uuid.UUID) error
 }
 
 func (m *mockRepo) Create(ctx context.Context, db *database.Database) error {

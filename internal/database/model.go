@@ -16,10 +16,10 @@ type Database struct {
 	ClusterName string
 	PoolerName  string
 	Status      string
-	Host       *string
-	Port       *int
-	SecretName *string
-	CreatedAt  time.Time
+	Host        *string
+	Port        *int
+	SecretName  *string
+	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	DeletedAt   *time.Time
 }

@@ -5,9 +5,10 @@ import (
 	"net/http"
 	"sync"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/daap14/daap/internal/api/middleware"
 	"github.com/daap14/daap/internal/api/response"
-	"sigs.k8s.io/yaml"
 )
 
 // OpenAPIHandler serves the OpenAPI spec as JSON.
@@ -38,5 +39,7 @@ func (h *OpenAPIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(h.jsonSpec)
+	if _, err := w.Write(h.jsonSpec); err != nil {
+		slog.Error("failed to write OpenAPI spec response", "error", err)
+	}
 }

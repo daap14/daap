@@ -15,11 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const defaultDBTestURL = "postgres://daap:daap@127.0.0.1:5433/daap_test?sslmode=disable"
