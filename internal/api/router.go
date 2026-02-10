@@ -13,12 +13,13 @@ import (
 
 // RouterDeps holds all dependencies needed by the router.
 type RouterDeps struct {
-	K8sChecker k8s.HealthChecker
-	DBPinger   handler.DBPinger
-	Version    string
-	Repo       database.Repository
-	K8sManager k8s.ResourceManager
-	Namespace  string
+	K8sChecker  k8s.HealthChecker
+	DBPinger    handler.DBPinger
+	Version     string
+	Repo        database.Repository
+	K8sManager  k8s.ResourceManager
+	Namespace   string
+	OpenAPISpec []byte
 }
 
 // NewRouter creates and configures a Chi router with all middleware and routes.
@@ -31,6 +32,11 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 
 	healthHandler := handler.NewHealthHandler(deps.K8sChecker, deps.DBPinger, deps.Version)
 	r.Get("/health", healthHandler.ServeHTTP)
+
+	if len(deps.OpenAPISpec) > 0 {
+		openapiHandler := handler.NewOpenAPIHandler(deps.OpenAPISpec)
+		r.Get("/openapi.json", openapiHandler.ServeHTTP)
+	}
 
 	if deps.Repo != nil && deps.K8sManager != nil {
 		dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.Namespace)

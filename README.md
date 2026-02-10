@@ -14,6 +14,16 @@ AI-assisted product development workflow. Transforms a product manifesto into a 
 
 See `CLAUDE.md` for full project context and conventions.
 
+## API Documentation
+
+The OpenAPI 3.1 specification is available at runtime:
+
+```
+GET /openapi.json
+```
+
+The spec source file is at `api/openapi.yaml`. It is embedded into the binary at build time and served as JSON.
+
 ## Development
 
 ```bash
