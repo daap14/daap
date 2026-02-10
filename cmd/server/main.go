@@ -13,10 +13,12 @@ import (
 	specpkg "github.com/daap14/daap/api"
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/api/handler"
+	"github.com/daap14/daap/internal/auth"
 	"github.com/daap14/daap/internal/config"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/reconciler"
+	"github.com/daap14/daap/internal/team"
 )
 
 func main() {
@@ -62,6 +64,22 @@ func main() {
 		k8sManager = k8sClient.NewManager()
 	}
 
+	var authService *auth.Service
+	var teamRepo team.Repository
+	var userRepo auth.UserRepository
+	if db != nil {
+		teamRepo = team.NewRepository(db.Pool())
+		userRepo = auth.NewRepository(db.Pool())
+		authService = auth.NewService(userRepo, teamRepo, cfg.BcryptCost)
+
+		rawKey, err := authService.BootstrapSuperuser(ctx)
+		if err != nil {
+			slog.Error("failed to bootstrap superuser", "error", err)
+		} else if rawKey != "" {
+			slog.Warn("=== SUPERUSER API KEY (save this, it won't be shown again) ===", "key", rawKey)
+		}
+	}
+
 	router := api.NewRouter(api.RouterDeps{
 		K8sChecker:  checker,
 		DBPinger:    dbPinger,
@@ -70,6 +88,9 @@ func main() {
 		K8sManager:  k8sManager,
 		Namespace:   cfg.Namespace,
 		OpenAPISpec: specpkg.OpenAPISpec,
+		AuthService: authService,
+		TeamRepo:    teamRepo,
+		UserRepo:    userRepo,
 	})
 
 	// Start reconciler if both repo and k8s manager are available.

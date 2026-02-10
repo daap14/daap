@@ -47,3 +47,9 @@ func GetIdentity(ctx context.Context) *auth.Identity {
 	}
 	return nil
 }
+
+// WithIdentity returns a context with the given identity set.
+// Intended for testing — allows injecting identity without running auth middleware.
+func WithIdentity(ctx context.Context, identity *auth.Identity) context.Context {
+	return context.WithValue(ctx, identityKey, identity)
+}
