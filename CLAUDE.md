@@ -4,9 +4,9 @@
 DAAP (Developer AI-Assisted Product) transforms a product manifesto into a working API/backend through iterative releases with feedback loops. Claude operates as the entire development team via agent teams.
 
 ## Current State
-- **Phase**: v0.2 released, ready for v0.3 planning
-- **Current Iteration**: v0.3 (next)
-- **Last Release**: v0.2.0 — Database Lifecycle (CRUD, CNPG provisioning, reconciler)
+- **Phase**: v0.4 released, ready for v0.5 planning
+- **Current Iteration**: v0.5 (next)
+- **Last Release**: v0.4.0 — Authentication, User Management, RBAC, Data Model Hardening
 - **Tech Stack**: Go (Chi router, client-go, CNPG Go API types, pgx — see ADRs 001, 002)
 
 ## Tech Stack
