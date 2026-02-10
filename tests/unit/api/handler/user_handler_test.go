@@ -269,21 +269,16 @@ func TestUserList_WithTeamInfo(t *testing.T) {
 
 	teamID := uuid.New()
 	userID := uuid.New()
+	teamName := "ops"
+	teamRole := "platform"
 
-	teamRepo := &mockTeamRepo{
-		getByIDFn: func(_ context.Context, id uuid.UUID) (*team.Team, error) {
-			return &team.Team{
-				ID:   teamID,
-				Name: "ops",
-				Role: "platform",
-			}, nil
-		},
-	}
+	teamRepo := &mockTeamRepo{}
 	userRepo := &mockUserRepo{
 		listFn: func(_ context.Context) ([]auth.User, error) {
-			return []auth.User{
-				*sampleUser(userID, &teamID, false),
-			}, nil
+			u := sampleUser(userID, &teamID, false)
+			u.TeamName = &teamName
+			u.TeamRole = &teamRole
+			return []auth.User{*u}, nil
 		},
 	}
 	authSvc := auth.NewService(userRepo, teamRepo, 4)

@@ -16,6 +16,8 @@ type User struct {
 	ApiKeyHash   string
 	CreatedAt    time.Time
 	RevokedAt    *time.Time
+	TeamName     *string // transient, populated via JOIN in List query
+	TeamRole     *string // transient, populated via JOIN in List query
 }
 
 // Identity is stored in the request context after authentication.

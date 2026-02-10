@@ -108,7 +108,8 @@ func (r *PostgresRepository) FindByPrefix(ctx context.Context, prefix string) ([
 func (r *PostgresRepository) List(ctx context.Context) ([]User, error) {
 	query := `
 		SELECT u.id, u.name, u.team_id, u.is_superuser, u.api_key_prefix,
-		       u.api_key_hash, u.created_at, u.revoked_at
+		       u.api_key_hash, u.created_at, u.revoked_at,
+		       t.name, t.role
 		FROM users u
 		LEFT JOIN teams t ON u.team_id = t.id
 		ORDER BY u.created_at ASC`
@@ -126,6 +127,7 @@ func (r *PostgresRepository) List(ctx context.Context) ([]User, error) {
 			&u.ID, &u.Name, &u.TeamID, &u.IsSuperuser,
 			&u.ApiKeyPrefix, &u.ApiKeyHash,
 			&u.CreatedAt, &u.RevokedAt,
+			&u.TeamName, &u.TeamRole,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning user row: %w", err)
