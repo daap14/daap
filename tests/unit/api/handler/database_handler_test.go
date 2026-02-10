@@ -84,12 +84,12 @@ func (m *mockRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 // --- Mock ResourceManager ---
 
 type mockManager struct {
-	applyClusterFn    func(ctx context.Context, cluster *unstructured.Unstructured) error
-	applyPoolerFn     func(ctx context.Context, pooler *unstructured.Unstructured) error
-	deleteClusterFn   func(ctx context.Context, namespace, name string) error
-	deletePoolerFn    func(ctx context.Context, namespace, name string) error
+	applyClusterFn     func(ctx context.Context, cluster *unstructured.Unstructured) error
+	applyPoolerFn      func(ctx context.Context, pooler *unstructured.Unstructured) error
+	deleteClusterFn    func(ctx context.Context, namespace, name string) error
+	deletePoolerFn     func(ctx context.Context, namespace, name string) error
 	getClusterStatusFn func(ctx context.Context, namespace, name string) (k8s.ClusterStatus, error)
-	getSecretFn       func(ctx context.Context, namespace, name string) (map[string][]byte, error)
+	getSecretFn        func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 }
 
 func (m *mockManager) ApplyCluster(ctx context.Context, cluster *unstructured.Unstructured) error {
