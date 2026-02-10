@@ -22,17 +22,44 @@ import (
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
+	"github.com/daap14/daap/internal/tier"
 )
 
 const defaultDBTestURL = "postgres://daap:daap@127.0.0.1:5433/daap_test?sslmode=disable"
 
 var testPool *pgxpool.Pool
 
+const createTiersTableSQL = `
+CREATE TABLE IF NOT EXISTS tiers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(63) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    instances INT NOT NULL DEFAULT 1
+        CHECK (instances >= 1 AND instances <= 10),
+    cpu VARCHAR(20) NOT NULL DEFAULT '500m',
+    memory VARCHAR(20) NOT NULL DEFAULT '512Mi',
+    storage_size VARCHAR(20) NOT NULL DEFAULT '1Gi',
+    storage_class VARCHAR(255) NOT NULL DEFAULT '',
+    pg_version VARCHAR(10) NOT NULL DEFAULT '16',
+    pool_mode VARCHAR(20) NOT NULL DEFAULT 'transaction'
+        CHECK (pool_mode IN ('transaction', 'session', 'statement')),
+    max_connections INT NOT NULL DEFAULT 100
+        CHECK (max_connections >= 10 AND max_connections <= 10000),
+    destruction_strategy VARCHAR(20) NOT NULL DEFAULT 'hard_delete'
+        CHECK (destruction_strategy IN ('freeze', 'archive', 'hard_delete')),
+    backup_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tiers_name ON tiers (name);
+`
+
 const createTableSQL = `
 CREATE TABLE IF NOT EXISTS databases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(63) NOT NULL,
     owner_team_id UUID NOT NULL,
+    tier_id UUID REFERENCES tiers(id) ON DELETE RESTRICT,
     purpose TEXT NOT NULL DEFAULT '',
     namespace VARCHAR(255) NOT NULL DEFAULT 'default',
     cluster_name VARCHAR(255) NOT NULL,
@@ -49,6 +76,7 @@ CREATE TABLE IF NOT EXISTS databases (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_databases_name_active ON databases (name) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_databases_owner_team_id ON databases (owner_team_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_databases_status ON databases (status);
+CREATE INDEX IF NOT EXISTS idx_databases_tier_id ON databases (tier_id);
 `
 
 const createAuthTablesSQL = `
@@ -92,10 +120,14 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Run migrations (auth tables must exist before databases table due to FK)
+	// Run migrations (order matters due to FK constraints: auth -> tiers -> databases)
 	if _, err := pool.Exec(ctx, createAuthTablesSQL); err != nil {
 		pool.Close()
 		log.Fatalf("Failed to run auth migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, createTiersTableSQL); err != nil {
+		pool.Close()
+		log.Fatalf("Failed to run tiers migration: %v", err)
 	}
 	if _, err := pool.Exec(ctx, createTableSQL); err != nil {
 		pool.Close()
@@ -174,6 +206,8 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	// Truncate for clean slate (order matters due to FK constraints)
 	_, err := testPool.Exec(ctx, "TRUNCATE TABLE databases CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -182,8 +216,27 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	repo := database.NewRepository(testPool)
 	mgr := &dbMockManager{}
 	teamRepo := team.NewRepository(testPool)
+	tierRepo := tier.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4) // low cost for test speed
+
+	// Create a default tier for database tests
+	defaultTier := &tier.Tier{
+		Name:                "standard",
+		Description:         "Standard tier for tests",
+		Instances:           1,
+		CPU:                 "500m",
+		Memory:              "512Mi",
+		StorageSize:         "1Gi",
+		StorageClass:        "",
+		PGVersion:           "16",
+		PoolMode:            "transaction",
+		MaxConnections:      100,
+		DestructionStrategy: "hard_delete",
+		BackupEnabled:       false,
+	}
+	err = tierRepo.Create(ctx, defaultTier)
+	require.NoError(t, err)
 
 	// Create a platform team and a platform user for authenticated requests
 	platformTeam := &team.Team{Name: "test-platform", Role: "platform"}
@@ -229,6 +282,7 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 		Namespace:   "default",
 		AuthService: authService,
 		TeamRepo:    teamRepo,
+		TierRepo:    tierRepo,
 		UserRepo:    userRepo,
 	})
 
@@ -288,6 +342,7 @@ func TestDatabaseLifecycle(t *testing.T) {
 	createBody := map[string]interface{}{
 		"name":      "lifecycle-db",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 		"purpose":   "integration test",
 	}
 
@@ -401,6 +456,7 @@ func TestCreate_InvalidName(t *testing.T) {
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", map[string]interface{}{
 		"name":      "INVALID_NAME",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	}, env.apiKey)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
@@ -416,6 +472,7 @@ func TestCreate_MissingRequired(t *testing.T) {
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", map[string]interface{}{
 		"name":      "valid-name",
 		"ownerTeam": "",
+		"tier":      "standard",
 	}, env.apiKey)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
@@ -444,6 +501,7 @@ func TestList_PaginationIntegration(t *testing.T) {
 		body := map[string]interface{}{
 			"name":      fmt.Sprintf("paginate-%d-db", i),
 			"ownerTeam": "platform",
+			"tier":      "standard",
 		}
 		resp, _ := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.apiKey)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -478,6 +536,7 @@ func TestList_FilterByTeam(t *testing.T) {
 		body := map[string]interface{}{
 			"name":      fmt.Sprintf("filter-%s-%d", team, env.mgr.appliedClusters),
 			"ownerTeam": team,
+			"tier":      "standard",
 		}
 		resp, _ := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.apiKey)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -516,6 +575,7 @@ func TestCreate_DuplicateNameIntegration(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "unique-db",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	}
 
 	resp, _ := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.apiKey)
@@ -535,6 +595,7 @@ func TestCreate_NameReuseAfterDelete(t *testing.T) {
 	body := map[string]interface{}{
 		"name":      "reusable-db",
 		"ownerTeam": "platform",
+		"tier":      "standard",
 	}
 
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/databases", body, env.apiKey)
