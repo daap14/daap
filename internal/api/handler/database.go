@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -110,6 +111,9 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Name = strings.TrimSpace(req.Name)
+	req.OwnerTeam = strings.TrimSpace(req.OwnerTeam)
+
 	// Ownership scoping for product users
 	if teamName, ok := isProductUser(r); ok {
 		if req.OwnerTeam == "" {
@@ -128,6 +132,8 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		response.ErrWithDetails(w, http.StatusBadRequest, "VALIDATION_ERROR", "Input validation failed", fieldErrors, requestID)
 		return
 	}
+
+	req.Purpose = strings.TrimSpace(req.Purpose)
 
 	namespace := req.Namespace
 	if namespace == "" {
