@@ -11,14 +11,8 @@ type Tier struct {
 	ID                  uuid.UUID
 	Name                string
 	Description         string
-	Instances           int
-	CPU                 string
-	Memory              string
-	StorageSize         string
-	StorageClass        string
-	PGVersion           string
-	PoolMode            string
-	MaxConnections      int
+	BlueprintID         *uuid.UUID // nullable for migration period
+	BlueprintName       string     // transient, populated via JOIN
 	DestructionStrategy string
 	BackupEnabled       bool
 	CreatedAt           time.Time
@@ -29,14 +23,7 @@ type Tier struct {
 // Nil fields are not updated.
 type UpdateFields struct {
 	Description         *string
-	Instances           *int
-	CPU                 *string
-	Memory              *string
-	StorageSize         *string
-	StorageClass        *string
-	PGVersion           *string
-	PoolMode            *string
-	MaxConnections      *int
+	BlueprintID         *uuid.UUID
 	DestructionStrategy *string
 	BackupEnabled       *bool
 }

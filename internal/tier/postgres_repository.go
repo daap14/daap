@@ -22,18 +22,21 @@ func NewPostgresRepository(pool *pgxpool.Pool) Repository {
 	return &PostgresRepository{pool: pool}
 }
 
-// allColumns is the ordered list of columns scanned from the tiers table.
-const allColumns = `id, name, description, instances, cpu, memory, storage_size,
-	storage_class, pg_version, pool_mode, max_connections,
-	destruction_strategy, backup_enabled, created_at, updated_at`
+// allColumns is the ordered list of columns scanned from the tiers table
+// with a LEFT JOIN on blueprints for the transient BlueprintName field.
+const allColumns = `t.id, t.name, t.description, t.blueprint_id,
+	COALESCE(b.name, ''), t.destruction_strategy, t.backup_enabled,
+	t.created_at, t.updated_at`
+
+// fromClause is the common FROM + JOIN clause used by all read queries.
+const fromClause = `FROM tiers t LEFT JOIN blueprints b ON t.blueprint_id = b.id`
 
 // scanTier scans a single Tier from a row.
 func scanTier(row pgx.Row) (*Tier, error) {
 	var t Tier
 	err := row.Scan(
 		&t.ID, &t.Name, &t.Description,
-		&t.Instances, &t.CPU, &t.Memory, &t.StorageSize,
-		&t.StorageClass, &t.PGVersion, &t.PoolMode, &t.MaxConnections,
+		&t.BlueprintID, &t.BlueprintName,
 		&t.DestructionStrategy, &t.BackupEnabled,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
@@ -49,20 +52,15 @@ func scanTier(row pgx.Row) (*Tier, error) {
 // Create inserts a new tier record.
 func (r *PostgresRepository) Create(ctx context.Context, t *Tier) error {
 	query := fmt.Sprintf(`
-		INSERT INTO tiers (name, description, instances, cpu, memory, storage_size,
-			storage_class, pg_version, pool_mode, max_connections,
-			destruction_strategy, backup_enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING %s`, allColumns)
+		INSERT INTO tiers (name, description, blueprint_id, destruction_strategy, backup_enabled)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at, updated_at`)
 
-	row := r.pool.QueryRow(ctx, query,
-		t.Name, t.Description,
-		t.Instances, t.CPU, t.Memory, t.StorageSize,
-		t.StorageClass, t.PGVersion, t.PoolMode, t.MaxConnections,
+	var id uuid.UUID
+	err := r.pool.QueryRow(ctx, query,
+		t.Name, t.Description, t.BlueprintID,
 		t.DestructionStrategy, t.BackupEnabled,
-	)
-
-	created, err := scanTier(row)
+	).Scan(&id, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -71,25 +69,32 @@ func (r *PostgresRepository) Create(ctx context.Context, t *Tier) error {
 		return fmt.Errorf("inserting tier: %w", err)
 	}
 
+	t.ID = id
+
+	// Fetch the full record with BlueprintName via JOIN.
+	created, err := r.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("fetching created tier: %w", err)
+	}
 	*t = *created
 	return nil
 }
 
 // GetByID retrieves a single tier by its UUID.
 func (r *PostgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*Tier, error) {
-	query := fmt.Sprintf(`SELECT %s FROM tiers WHERE id = $1`, allColumns)
+	query := fmt.Sprintf(`SELECT %s %s WHERE t.id = $1`, allColumns, fromClause)
 	return scanTier(r.pool.QueryRow(ctx, query, id))
 }
 
 // GetByName retrieves a single tier by its name.
 func (r *PostgresRepository) GetByName(ctx context.Context, name string) (*Tier, error) {
-	query := fmt.Sprintf(`SELECT %s FROM tiers WHERE name = $1`, allColumns)
+	query := fmt.Sprintf(`SELECT %s %s WHERE t.name = $1`, allColumns, fromClause)
 	return scanTier(r.pool.QueryRow(ctx, query, name))
 }
 
 // List retrieves all tiers ordered by creation time.
 func (r *PostgresRepository) List(ctx context.Context) ([]Tier, error) {
-	query := fmt.Sprintf(`SELECT %s FROM tiers ORDER BY created_at ASC`, allColumns)
+	query := fmt.Sprintf(`SELECT %s %s ORDER BY t.created_at ASC`, allColumns, fromClause)
 
 	rows, err := r.pool.Query(ctx, query)
 	if err != nil {
@@ -102,8 +107,7 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Tier, error) {
 		var t Tier
 		err := rows.Scan(
 			&t.ID, &t.Name, &t.Description,
-			&t.Instances, &t.CPU, &t.Memory, &t.StorageSize,
-			&t.StorageClass, &t.PGVersion, &t.PoolMode, &t.MaxConnections,
+			&t.BlueprintID, &t.BlueprintName,
 			&t.DestructionStrategy, &t.BackupEnabled,
 			&t.CreatedAt, &t.UpdatedAt,
 		)
@@ -134,44 +138,9 @@ func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, fields Up
 		args = append(args, *fields.Description)
 		argIdx++
 	}
-	if fields.Instances != nil {
-		setClauses = append(setClauses, fmt.Sprintf("instances = $%d", argIdx))
-		args = append(args, *fields.Instances)
-		argIdx++
-	}
-	if fields.CPU != nil {
-		setClauses = append(setClauses, fmt.Sprintf("cpu = $%d", argIdx))
-		args = append(args, *fields.CPU)
-		argIdx++
-	}
-	if fields.Memory != nil {
-		setClauses = append(setClauses, fmt.Sprintf("memory = $%d", argIdx))
-		args = append(args, *fields.Memory)
-		argIdx++
-	}
-	if fields.StorageSize != nil {
-		setClauses = append(setClauses, fmt.Sprintf("storage_size = $%d", argIdx))
-		args = append(args, *fields.StorageSize)
-		argIdx++
-	}
-	if fields.StorageClass != nil {
-		setClauses = append(setClauses, fmt.Sprintf("storage_class = $%d", argIdx))
-		args = append(args, *fields.StorageClass)
-		argIdx++
-	}
-	if fields.PGVersion != nil {
-		setClauses = append(setClauses, fmt.Sprintf("pg_version = $%d", argIdx))
-		args = append(args, *fields.PGVersion)
-		argIdx++
-	}
-	if fields.PoolMode != nil {
-		setClauses = append(setClauses, fmt.Sprintf("pool_mode = $%d", argIdx))
-		args = append(args, *fields.PoolMode)
-		argIdx++
-	}
-	if fields.MaxConnections != nil {
-		setClauses = append(setClauses, fmt.Sprintf("max_connections = $%d", argIdx))
-		args = append(args, *fields.MaxConnections)
+	if fields.BlueprintID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("blueprint_id = $%d", argIdx))
+		args = append(args, *fields.BlueprintID)
 		argIdx++
 	}
 	if fields.DestructionStrategy != nil {
@@ -197,14 +166,20 @@ func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, fields Up
 		UPDATE tiers
 		SET %s
 		WHERE id = $%d
-		RETURNING %s`,
-		strings.Join(setClauses, ", "), argIdx, allColumns)
+		RETURNING id`,
+		strings.Join(setClauses, ", "), argIdx)
 
-	t, err := scanTier(r.pool.QueryRow(ctx, query, args...))
+	var updatedID uuid.UUID
+	err := r.pool.QueryRow(ctx, query, args...).Scan(&updatedID)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTierNotFound
+		}
+		return nil, fmt.Errorf("updating tier: %w", err)
 	}
-	return t, nil
+
+	// Fetch the full record with BlueprintName via JOIN.
+	return r.GetByID(ctx, updatedID)
 }
 
 // Delete removes a tier by its UUID. Returns ErrTierHasDatabases if the tier
