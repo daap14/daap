@@ -57,6 +57,9 @@ func (m *mockBlueprintRepo) Create(ctx context.Context, bp *blueprint.Blueprint)
 	if m.createFn != nil {
 		return m.createFn(ctx, bp)
 	}
+	bp.ID = uuid.New()
+	bp.CreatedAt = time.Now().UTC()
+	bp.UpdatedAt = time.Now().UTC()
 	return nil
 }
 

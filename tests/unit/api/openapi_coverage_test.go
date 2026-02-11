@@ -64,7 +64,7 @@ func (n *noopBlueprintRepo) GetByName(_ context.Context, _ string) (*blueprint.B
 	return nil, nil
 }
 func (n *noopBlueprintRepo) List(_ context.Context) ([]blueprint.Blueprint, error) { return nil, nil }
-func (n *noopBlueprintRepo) Delete(_ context.Context, _ uuid.UUID) error            { return nil }
+func (n *noopBlueprintRepo) Delete(_ context.Context, _ uuid.UUID) error           { return nil }
 
 type noopTeamRepo struct{}
 

@@ -5,8 +5,9 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/daap14/daap/internal/provider"
 	sigsyaml "sigs.k8s.io/yaml"
+
+	"github.com/daap14/daap/internal/provider"
 )
 
 // CreateBlueprintRequest mirrors the fields needed for create blueprint validation.
