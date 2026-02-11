@@ -54,12 +54,12 @@ curl -H "X-API-Key: daap_..." http://localhost:8080/teams
 
 ### Roles and Permissions
 
-| Caller | `/teams` | `/users` | `/tiers` | `/databases` | `/health`, `/openapi.json` |
+| Caller | `/teams` | `/users` | `/blueprints` | `/tiers` | `/databases` | `/health`, `/openapi.json` |
 |---|---|---|---|---|---|
-| Superuser | Full access | Full access | No access (403) | No access (403) | Public |
-| Platform user | No access (403) | No access (403) | Full CRUD | Full access (all databases) | Public |
-| Product user | No access (403) | No access (403) | Read-only (redacted) | Own team's databases only | Public |
-| Unauthenticated | 401 | 401 | 401 | 401 | Public |
+| Superuser | Full access | Full access | No access (403) | No access (403) | No access (403) | Public |
+| Platform user | No access (403) | No access (403) | Full CRUD | Full CRUD | Full access (all databases) | Public |
+| Product user | No access (403) | No access (403) | Read-only | Read-only (redacted) | Own team's databases only | Public |
+| Unauthenticated | 401 | 401 | 401 | 401 | 401 | Public |
 
 ### Public Endpoints
 
@@ -86,9 +86,22 @@ The following endpoints require no authentication:
 | `GET` | `/users` | List all users (metadata only) |
 | `DELETE` | `/users/{id}` | Revoke a user |
 
+### Blueprints
+
+Blueprints define infrastructure templates — multi-document YAML manifests with Go template placeholders. Each blueprint is bound to a provider (e.g., `cnpg`). Platform users manage blueprints; product users can read them.
+
+| Method | Path | Description | Access |
+|---|---|---|---|
+| `POST` | `/blueprints` | Create a blueprint | Platform only |
+| `GET` | `/blueprints` | List all blueprints | Platform / Product |
+| `GET` | `/blueprints/{id}` | Get a blueprint by ID | Platform / Product |
+| `DELETE` | `/blueprints/{id}` | Delete a blueprint | Platform only |
+
+A blueprint cannot be deleted while tiers reference it (returns 409 `BLUEPRINT_HAS_TIERS`).
+
 ### Tiers
 
-Tiers define the infrastructure parameters applied to databases (cluster sizing, storage, PostgreSQL version, pooler config, destruction strategy). Platform users manage tiers; product users see only a summary (id, name, description).
+Tiers link a blueprint to operational policies (destruction strategy, backup). Creating a tier requires a `blueprintName` referencing an existing blueprint. Platform users manage tiers; product users see only a summary (id, name, description).
 
 | Method | Path | Description | Access |
 |---|---|---|---|
@@ -98,7 +111,7 @@ Tiers define the infrastructure parameters applied to databases (cluster sizing,
 | `PATCH` | `/tiers/{id}` | Update a tier | Platform only |
 | `DELETE` | `/tiers/{id}` | Delete a tier | Platform only |
 
-Product users receive a redacted response with only `id`, `name`, and `description`. Platform users see all 15 fields including `instances`, `cpu`, `memory`, `storageSize`, `pgVersion`, `poolMode`, `maxConnections`, and more.
+Product users receive a redacted response with only `id`, `name`, and `description`. Platform users see all fields including `blueprintId`, `blueprintName`, `destructionStrategy`, and `backupEnabled`.
 
 A tier cannot be deleted while databases reference it (returns 409 `TIER_HAS_DATABASES`).
 
@@ -112,7 +125,7 @@ A tier cannot be deleted while databases reference it (returns 409 `TIER_HAS_DAT
 | `PATCH` | `/databases/{id}` | Update a database |
 | `DELETE` | `/databases/{id}` | Delete a database |
 
-Creating a database requires a `tier` name (e.g., `"tier": "standard"`). The tier determines the CNPG cluster configuration (instances, CPU, memory, storage, PG version) and pooler settings (pool mode, max connections).
+Creating a database requires a `tier` name (e.g., `"tier": "standard"`). The tier's linked blueprint determines the infrastructure manifests applied via the provider.
 
 ## Development
 
