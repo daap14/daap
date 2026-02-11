@@ -15,6 +15,7 @@ func validCreateTierRequest() validation.CreateTierRequest {
 	return validation.CreateTierRequest{
 		Name:                "standard",
 		Description:         "Standard tier",
+		BlueprintName:       "cnpg-standard",
 		DestructionStrategy: "hard_delete",
 		BackupEnabled:       false,
 	}
@@ -66,6 +67,22 @@ func TestCreateTier_NameRegex(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCreateTier_BlueprintNameRequired(t *testing.T) {
+	t.Parallel()
+	req := validCreateTierRequest()
+	req.BlueprintName = ""
+	errs := validation.ValidateCreateTierRequest(req)
+	assertFieldError(t, errs, "blueprintName", "required")
+}
+
+func TestCreateTier_BlueprintNameWhitespace(t *testing.T) {
+	t.Parallel()
+	req := validCreateTierRequest()
+	req.BlueprintName = "   "
+	errs := validation.ValidateCreateTierRequest(req)
+	assertHasFieldError(t, errs, "blueprintName")
 }
 
 func TestCreateTier_DescriptionMaxLength(t *testing.T) {

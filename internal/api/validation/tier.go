@@ -33,6 +33,10 @@ func ValidateCreateTierRequest(req CreateTierRequest) []FieldError {
 		errs = append(errs, FieldError{Field: "description", Message: "description must be at most 1000 characters"})
 	}
 
+	if strings.TrimSpace(req.BlueprintName) == "" {
+		errs = append(errs, FieldError{Field: "blueprintName", Message: "blueprintName is required"})
+	}
+
 	if req.DestructionStrategy == "" {
 		errs = append(errs, FieldError{Field: "destructionStrategy", Message: "destructionStrategy is required"})
 	} else if !validDestructionStrategies[req.DestructionStrategy] {

@@ -113,6 +113,7 @@ func TestTierCreate_Success(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":                "standard",
 		"description":         "Standard tier",
+		"blueprintName":       "cnpg-standard",
 		"destructionStrategy": "hard_delete",
 		"backupEnabled":       false,
 	})
@@ -221,6 +222,7 @@ func TestTierCreate_DuplicateName(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":                "standard",
+		"blueprintName":       "cnpg-standard",
 		"destructionStrategy": "hard_delete",
 	})
 

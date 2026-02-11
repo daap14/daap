@@ -118,21 +118,18 @@ func (h *TierHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve blueprint by name if provided
-	var blueprintID *uuid.UUID
-	if req.BlueprintName != "" {
-		bp, err := h.bpRepo.GetByName(r.Context(), req.BlueprintName)
-		if err != nil {
-			if errors.Is(err, blueprint.ErrBlueprintNotFound) {
-				response.Err(w, http.StatusNotFound, "NOT_FOUND", "Blueprint not found", requestID)
-				return
-			}
-			slog.Error("failed to look up blueprint", "error", err)
-			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create tier", requestID)
+	// Resolve blueprint by name (required per ADR 008)
+	bp, err := h.bpRepo.GetByName(r.Context(), strings.TrimSpace(req.BlueprintName))
+	if err != nil {
+		if errors.Is(err, blueprint.ErrBlueprintNotFound) {
+			response.Err(w, http.StatusNotFound, "NOT_FOUND", "Blueprint not found", requestID)
 			return
 		}
-		blueprintID = &bp.ID
+		slog.Error("failed to look up blueprint", "error", err)
+		response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create tier", requestID)
+		return
 	}
+	blueprintID := &bp.ID
 
 	t := &tier.Tier{
 		Name:                req.Name,
