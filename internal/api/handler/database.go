@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/daap14/daap/internal/api/validation"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
-	"github.com/daap14/daap/internal/k8s/template"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -197,38 +195,9 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster := template.BuildCluster(template.ClusterParams{
-		Name:         db.Name,
-		Namespace:    db.Namespace,
-		Instances:    resolvedTier.Instances,
-		CPU:          resolvedTier.CPU,
-		Memory:       resolvedTier.Memory,
-		StorageSize:  resolvedTier.StorageSize,
-		StorageClass: resolvedTier.StorageClass,
-		PGVersion:    resolvedTier.PGVersion,
-	})
-
-	if err := h.manager.ApplyCluster(r.Context(), cluster); err != nil {
-		slog.Error("failed to apply CNPG cluster", "error", err, "database", db.Name)
-		h.markCreateError(r.Context(), db)
-		response.Err(w, http.StatusInternalServerError, "K8S_ERROR", "Failed to create Kubernetes cluster resource", requestID)
-		return
-	}
-
-	pooler := template.BuildPooler(template.PoolerParams{
-		Name:           db.Name,
-		Namespace:      db.Namespace,
-		ClusterName:    db.ClusterName,
-		PoolMode:       resolvedTier.PoolMode,
-		MaxConnections: resolvedTier.MaxConnections,
-	})
-
-	if err := h.manager.ApplyPooler(r.Context(), pooler); err != nil {
-		slog.Error("failed to apply CNPG pooler", "error", err, "database", db.Name)
-		h.markCreateError(r.Context(), db)
-		response.Err(w, http.StatusInternalServerError, "K8S_ERROR", "Failed to create Kubernetes pooler resource", requestID)
-		return
-	}
+	// TODO(v0.6-PR-C): Replace with provider.Apply() once the provider abstraction is implemented.
+	// K8s resource creation is temporarily disabled until the blueprint/provider system is wired in.
+	slog.Info("database record created; K8s resource creation pending provider implementation", "database", db.Name)
 
 	response.Success(w, http.StatusCreated, toDatabaseResponse(db), requestID)
 }
@@ -460,12 +429,4 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
-// markCreateError sets a newly created database record to "error" status
-// when Kubernetes resource creation fails.
-func (h *DatabaseHandler) markCreateError(ctx context.Context, db *database.Database) {
-	if _, err := h.repo.UpdateStatus(ctx, db.ID, database.StatusUpdate{
-		Status: "error",
-	}); err != nil {
-		slog.Error("failed to mark database as error after K8s failure", "error", err, "database", db.Name)
-	}
-}
+// TODO(v0.6-PR-C): Restore markCreateError when provider.Apply() is wired in.

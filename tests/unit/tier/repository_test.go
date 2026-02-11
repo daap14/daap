@@ -10,12 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/tier"
 )
 
 const defaultTestDatabaseURL = "postgres://daap:daap@127.0.0.1:5433/daap_test?sslmode=disable"
 
-func setupTierRepo(t *testing.T) (tier.Repository, *pgxpool.Pool, func()) {
+func setupTierRepo(t *testing.T) (tier.Repository, blueprint.Repository, *pgxpool.Pool, func()) {
 	t.Helper()
 
 	dbURL := os.Getenv("TEST_DATABASE_URL")
@@ -34,31 +35,39 @@ func setupTierRepo(t *testing.T) (tier.Repository, *pgxpool.Pool, func()) {
 		t.Skipf("skipping: cannot ping test database: %v", err)
 	}
 
-	// Clean slate: truncate databases first (FK dependency), then tiers
+	// Clean slate: truncate databases first (FK dependency), then tiers, then blueprints
 	_, err = pool.Exec(ctx, "TRUNCATE TABLE databases CASCADE")
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
 	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "TRUNCATE TABLE blueprints CASCADE")
+	require.NoError(t, err)
 
-	repo := tier.NewPostgresRepository(pool)
+	tierRepo := tier.NewPostgresRepository(pool)
+	bpRepo := blueprint.NewPostgresRepository(pool)
 	cleanup := func() {
 		pool.Close()
 	}
-	return repo, pool, cleanup
+	return tierRepo, bpRepo, pool, cleanup
 }
 
-func newTestTier(name string) *tier.Tier {
+func createTestBlueprint(t *testing.T, bpRepo blueprint.Repository, name string) *blueprint.Blueprint {
+	t.Helper()
+	bp := &blueprint.Blueprint{
+		Name:      name,
+		Provider:  "cnpg",
+		Manifests: "---\napiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: test\n",
+	}
+	err := bpRepo.Create(context.Background(), bp)
+	require.NoError(t, err)
+	return bp
+}
+
+func newTestTier(name string, blueprintID *uuid.UUID) *tier.Tier {
 	return &tier.Tier{
 		Name:                name,
 		Description:         "Test tier",
-		Instances:           1,
-		CPU:                 "500m",
-		Memory:              "512Mi",
-		StorageSize:         "1Gi",
-		StorageClass:        "",
-		PGVersion:           "16",
-		PoolMode:            "transaction",
-		MaxConnections:      100,
+		BlueprintID:         blueprintID,
 		DestructionStrategy: "hard_delete",
 		BackupEnabled:       false,
 	}
@@ -67,11 +76,12 @@ func newTestTier(name string) *tier.Tier {
 // --- Create Tests ---
 
 func TestCreate_Success(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("standard")
+	bp := createTestBlueprint(t, bpRepo, "bp-create")
+	tr := newTestTier("standard", &bp.ID)
 
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
@@ -79,30 +89,40 @@ func TestCreate_Success(t *testing.T) {
 	assert.NotEqual(t, uuid.Nil, tr.ID)
 	assert.Equal(t, "standard", tr.Name)
 	assert.Equal(t, "Test tier", tr.Description)
-	assert.Equal(t, 1, tr.Instances)
-	assert.Equal(t, "500m", tr.CPU)
-	assert.Equal(t, "512Mi", tr.Memory)
-	assert.Equal(t, "1Gi", tr.StorageSize)
-	assert.Equal(t, "", tr.StorageClass)
-	assert.Equal(t, "16", tr.PGVersion)
-	assert.Equal(t, "transaction", tr.PoolMode)
-	assert.Equal(t, 100, tr.MaxConnections)
+	assert.Equal(t, &bp.ID, tr.BlueprintID)
+	assert.Equal(t, "bp-create", tr.BlueprintName)
 	assert.Equal(t, "hard_delete", tr.DestructionStrategy)
 	assert.False(t, tr.BackupEnabled)
 	assert.False(t, tr.CreatedAt.IsZero())
 	assert.False(t, tr.UpdatedAt.IsZero())
 }
 
-func TestCreate_DuplicateName(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+func TestCreate_NilBlueprintID(t *testing.T) {
+	repo, _, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr1 := newTestTier("duptier")
+	tr := newTestTier("no-blueprint", nil)
+
+	err := repo.Create(ctx, tr)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, uuid.Nil, tr.ID)
+	assert.Nil(t, tr.BlueprintID)
+	assert.Equal(t, "", tr.BlueprintName)
+}
+
+func TestCreate_DuplicateName(t *testing.T) {
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	bp := createTestBlueprint(t, bpRepo, "bp-dup")
+	tr1 := newTestTier("duptier", &bp.ID)
 	err := repo.Create(ctx, tr1)
 	require.NoError(t, err)
 
-	tr2 := newTestTier("duptier")
+	tr2 := newTestTier("duptier", &bp.ID)
 	err = repo.Create(ctx, tr2)
 	assert.ErrorIs(t, err, tier.ErrDuplicateTierName)
 }
@@ -110,11 +130,12 @@ func TestCreate_DuplicateName(t *testing.T) {
 // --- GetByID Tests ---
 
 func TestGetByID_Success(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("get-by-id")
+	bp := createTestBlueprint(t, bpRepo, "bp-getbyid")
+	tr := newTestTier("get-by-id", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 
@@ -123,11 +144,12 @@ func TestGetByID_Success(t *testing.T) {
 
 	assert.Equal(t, tr.ID, found.ID)
 	assert.Equal(t, "get-by-id", found.Name)
-	assert.Equal(t, 1, found.Instances)
+	assert.Equal(t, &bp.ID, found.BlueprintID)
+	assert.Equal(t, "bp-getbyid", found.BlueprintName)
 }
 
 func TestGetByID_NotFound(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, _, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -138,11 +160,12 @@ func TestGetByID_NotFound(t *testing.T) {
 // --- GetByName Tests ---
 
 func TestGetByName_Success(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("by-name")
+	bp := createTestBlueprint(t, bpRepo, "bp-byname")
+	tr := newTestTier("by-name", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 
@@ -151,10 +174,11 @@ func TestGetByName_Success(t *testing.T) {
 
 	assert.Equal(t, tr.ID, found.ID)
 	assert.Equal(t, "by-name", found.Name)
+	assert.Equal(t, "bp-byname", found.BlueprintName)
 }
 
 func TestGetByName_NotFound(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, _, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -165,7 +189,7 @@ func TestGetByName_NotFound(t *testing.T) {
 // --- List Tests ---
 
 func TestList_Empty(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, _, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -176,12 +200,13 @@ func TestList_Empty(t *testing.T) {
 }
 
 func TestList_MultipleTiers(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
+	bp := createTestBlueprint(t, bpRepo, "bp-list")
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		tr := newTestTier(name)
+		tr := newTestTier(name, &bp.ID)
 		err := repo.Create(ctx, tr)
 		require.NoError(t, err)
 	}
@@ -199,30 +224,50 @@ func TestList_MultipleTiers(t *testing.T) {
 // --- Update Tests ---
 
 func TestUpdate_Success(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("updatable")
+	bp := createTestBlueprint(t, bpRepo, "bp-update")
+	tr := newTestTier("updatable", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 
 	newDesc := "Updated description"
-	newInstances := 3
 	updated, err := repo.Update(ctx, tr.ID, tier.UpdateFields{
 		Description: &newDesc,
-		Instances:   &newInstances,
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, "Updated description", updated.Description)
-	assert.Equal(t, 3, updated.Instances)
 	assert.Equal(t, "updatable", updated.Name) // name unchanged
 	assert.True(t, updated.UpdatedAt.After(tr.UpdatedAt) || updated.UpdatedAt.Equal(tr.UpdatedAt))
 }
 
+func TestUpdate_BlueprintID(t *testing.T) {
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	bp1 := createTestBlueprint(t, bpRepo, "bp-update-1")
+	bp2 := createTestBlueprint(t, bpRepo, "bp-update-2")
+	tr := newTestTier("update-bp", &bp1.ID)
+	err := repo.Create(ctx, tr)
+	require.NoError(t, err)
+
+	assert.Equal(t, "bp-update-1", tr.BlueprintName)
+
+	updated, err := repo.Update(ctx, tr.ID, tier.UpdateFields{
+		BlueprintID: &bp2.ID,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, &bp2.ID, updated.BlueprintID)
+	assert.Equal(t, "bp-update-2", updated.BlueprintName)
+}
+
 func TestUpdate_NotFound(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, _, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -233,32 +278,13 @@ func TestUpdate_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, tier.ErrTierNotFound)
 }
 
-func TestUpdate_PartialFields(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	tr := newTestTier("partial")
-	err := repo.Create(ctx, tr)
-	require.NoError(t, err)
-
-	newCPU := "1"
-	updated, err := repo.Update(ctx, tr.ID, tier.UpdateFields{
-		CPU: &newCPU,
-	})
-	require.NoError(t, err)
-
-	assert.Equal(t, "1", updated.CPU)
-	assert.Equal(t, "512Mi", updated.Memory) // unchanged
-	assert.Equal(t, 1, updated.Instances)    // unchanged
-}
-
 func TestUpdate_NoFields(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("no-change")
+	bp := createTestBlueprint(t, bpRepo, "bp-nochange")
+	tr := newTestTier("no-change", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 
@@ -272,11 +298,12 @@ func TestUpdate_NoFields(t *testing.T) {
 // --- Delete Tests ---
 
 func TestDelete_Success(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, bpRepo, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("deleteme")
+	bp := createTestBlueprint(t, bpRepo, "bp-delete")
+	tr := newTestTier("deleteme", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 
@@ -288,7 +315,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_NotFound(t *testing.T) {
-	repo, _, cleanup := setupTierRepo(t)
+	repo, _, _, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -297,11 +324,12 @@ func TestDelete_NotFound(t *testing.T) {
 }
 
 func TestDelete_TierHasDatabases(t *testing.T) {
-	repo, pool, cleanup := setupTierRepo(t)
+	repo, bpRepo, pool, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("has-dbs")
+	bp := createTestBlueprint(t, bpRepo, "bp-has-dbs")
+	tr := newTestTier("has-dbs", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 
@@ -326,11 +354,12 @@ func TestDelete_TierHasDatabases(t *testing.T) {
 }
 
 func TestDelete_SoftDeletedDatabaseDoesNotBlock(t *testing.T) {
-	repo, pool, cleanup := setupTierRepo(t)
+	repo, bpRepo, pool, cleanup := setupTierRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	tr := newTestTier("soft-del")
+	bp := createTestBlueprint(t, bpRepo, "bp-soft-del")
+	tr := newTestTier("soft-del", &bp.ID)
 	err := repo.Create(ctx, tr)
 	require.NoError(t, err)
 

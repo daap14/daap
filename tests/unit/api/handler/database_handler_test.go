@@ -215,15 +215,11 @@ func (m *mockTierRepo) GetByName(ctx context.Context, name string) (*tier.Tier, 
 		return m.getByNameFn(ctx, name)
 	}
 	return &tier.Tier{
-		ID:             uuid.New(),
-		Name:           name,
-		Instances:      1,
-		CPU:            "500m",
-		Memory:         "512Mi",
-		StorageSize:    "1Gi",
-		PGVersion:      "16",
-		PoolMode:       "transaction",
-		MaxConnections: 100,
+		ID:                  uuid.New(),
+		Name:                name,
+		Description:         "Default test tier",
+		DestructionStrategy: "hard_delete",
+		BackupEnabled:       false,
 	}, nil
 }
 
@@ -440,15 +436,11 @@ func TestCreate_OwnerTeamNotFound(t *testing.T) {
 	assert.Equal(t, "NOT_FOUND", errObj["code"])
 }
 
-func TestCreate_K8sError_MarksRecordAsError(t *testing.T) {
-	// Arrange: repo succeeds, K8s ApplyCluster fails
-	var statusUpdate *database.StatusUpdate
-	repo := &mockRepo{
-		updateStatusFn: func(_ context.Context, _ uuid.UUID, su database.StatusUpdate) (*database.Database, error) {
-			statusUpdate = &su
-			return &database.Database{Status: su.Status}, nil
-		},
-	}
+func TestCreate_SuccessWithoutK8s(t *testing.T) {
+	// K8s resource creation is temporarily disabled pending provider abstraction (v0.6 PR C).
+	// This test verifies that Create succeeds even when K8s manager would fail,
+	// since the handler currently only creates the DB record.
+	repo := &mockRepo{}
 	mgr := &mockManager{
 		applyClusterFn: func(_ context.Context, _ *unstructured.Unstructured) error {
 			return errors.New("k8s connection refused")
@@ -468,16 +460,11 @@ func TestCreate_K8sError_MarksRecordAsError(t *testing.T) {
 	// Act
 	h.Create(w, req)
 
-	// Assert: returns 500 with K8S_ERROR
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// Assert: returns 201 — K8s creation is deferred to provider
+	assert.Equal(t, http.StatusCreated, w.Code)
 
 	env := parseEnvelope(t, w)
-	errObj := env["error"].(map[string]interface{})
-	assert.Equal(t, "K8S_ERROR", errObj["code"])
-
-	// Assert: record was marked as "error"
-	require.NotNil(t, statusUpdate, "expected UpdateStatus to be called")
-	assert.Equal(t, "error", statusUpdate.Status)
+	assert.Nil(t, env["error"])
 }
 
 func TestCreate_TierRequired(t *testing.T) {
@@ -565,15 +552,10 @@ func TestCreate_TierNameInResponse(t *testing.T) {
 	tierRepo := &mockTierRepo{
 		getByNameFn: func(_ context.Context, name string) (*tier.Tier, error) {
 			return &tier.Tier{
-				ID:             stdTierID,
-				Name:           name,
-				Instances:      1,
-				CPU:            "500m",
-				Memory:         "512Mi",
-				StorageSize:    "1Gi",
-				PGVersion:      "16",
-				PoolMode:       "transaction",
-				MaxConnections: 100,
+				ID:                  stdTierID,
+				Name:                name,
+				DestructionStrategy: "hard_delete",
+				BackupEnabled:       false,
 			}, nil
 		},
 	}

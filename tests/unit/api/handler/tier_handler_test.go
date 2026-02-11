@@ -12,34 +12,84 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/daap14/daap/internal/api/handler"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/tier"
 )
 
 // --- Helpers ---
 
 func newTierHandler(repo tier.Repository) *handler.TierHandler {
-	return handler.NewTierHandler(repo)
+	bpRepo := &mockBlueprintRepo{}
+	return handler.NewTierHandler(repo, bpRepo)
+}
+
+func newTierHandlerWithBP(repo tier.Repository, bpRepo blueprint.Repository) *handler.TierHandler {
+	return handler.NewTierHandler(repo, bpRepo)
 }
 
 func sampleTier(id uuid.UUID) *tier.Tier {
 	now := time.Now().UTC()
+	bpID := uuid.New()
 	return &tier.Tier{
 		ID:                  id,
 		Name:                "standard",
 		Description:         "Standard tier",
-		Instances:           1,
-		CPU:                 "500m",
-		Memory:              "512Mi",
-		StorageSize:         "1Gi",
-		StorageClass:        "gp3",
-		PGVersion:           "16",
-		PoolMode:            "transaction",
-		MaxConnections:      100,
+		BlueprintID:         &bpID,
+		BlueprintName:       "cnpg-standard",
 		DestructionStrategy: "hard_delete",
 		BackupEnabled:       false,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
+}
+
+// --- Mock Blueprint Repository ---
+
+type mockBlueprintRepo struct {
+	getByNameFn func(ctx context.Context, name string) (*blueprint.Blueprint, error)
+	getByIDFn   func(ctx context.Context, id uuid.UUID) (*blueprint.Blueprint, error)
+	createFn    func(ctx context.Context, bp *blueprint.Blueprint) error
+	listFn      func(ctx context.Context) ([]blueprint.Blueprint, error)
+	deleteFn    func(ctx context.Context, id uuid.UUID) error
+}
+
+func (m *mockBlueprintRepo) Create(ctx context.Context, bp *blueprint.Blueprint) error {
+	if m.createFn != nil {
+		return m.createFn(ctx, bp)
+	}
+	return nil
+}
+
+func (m *mockBlueprintRepo) GetByID(ctx context.Context, id uuid.UUID) (*blueprint.Blueprint, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return nil, blueprint.ErrBlueprintNotFound
+}
+
+func (m *mockBlueprintRepo) GetByName(ctx context.Context, name string) (*blueprint.Blueprint, error) {
+	if m.getByNameFn != nil {
+		return m.getByNameFn(ctx, name)
+	}
+	return &blueprint.Blueprint{
+		ID:       uuid.New(),
+		Name:     name,
+		Provider: "cnpg",
+	}, nil
+}
+
+func (m *mockBlueprintRepo) List(ctx context.Context) ([]blueprint.Blueprint, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx)
+	}
+	return []blueprint.Blueprint{}, nil
+}
+
+func (m *mockBlueprintRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	if m.deleteFn != nil {
+		return m.deleteFn(ctx, id)
+	}
+	return nil
 }
 
 // ===== POST /tiers =====
@@ -63,14 +113,7 @@ func TestTierCreate_Success(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":                "standard",
 		"description":         "Standard tier",
-		"instances":           1,
-		"cpu":                 "500m",
-		"memory":              "512Mi",
-		"storageSize":         "1Gi",
-		"storageClass":        "gp3",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      100,
+		"blueprintName":       "cnpg-standard",
 		"destructionStrategy": "hard_delete",
 		"backupEnabled":       false,
 	})
@@ -88,6 +131,64 @@ func TestTierCreate_Success(t *testing.T) {
 	assert.NotEmpty(t, data["createdAt"])
 }
 
+func TestTierCreate_WithBlueprint(t *testing.T) {
+	t.Parallel()
+
+	bpID := uuid.New()
+	bpRepo := &mockBlueprintRepo{
+		getByNameFn: func(_ context.Context, name string) (*blueprint.Blueprint, error) {
+			return &blueprint.Blueprint{ID: bpID, Name: name, Provider: "cnpg"}, nil
+		},
+	}
+	repo := &mockTierRepo{
+		createFn: func(_ context.Context, t *tier.Tier) error {
+			t.ID = uuid.New()
+			t.CreatedAt = time.Now().UTC()
+			t.UpdatedAt = time.Now().UTC()
+			return nil
+		},
+	}
+	h := newTierHandlerWithBP(repo, bpRepo)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":                "standard",
+		"blueprintName":       "cnpg-standard",
+		"destructionStrategy": "hard_delete",
+	})
+
+	req, w := makeChiRequest(http.MethodPost, "/tiers", body, "/tiers", nil)
+	h.Create(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+}
+
+func TestTierCreate_BlueprintNotFound(t *testing.T) {
+	t.Parallel()
+
+	bpRepo := &mockBlueprintRepo{
+		getByNameFn: func(_ context.Context, _ string) (*blueprint.Blueprint, error) {
+			return nil, blueprint.ErrBlueprintNotFound
+		},
+	}
+	repo := &mockTierRepo{}
+	h := newTierHandlerWithBP(repo, bpRepo)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":                "standard",
+		"blueprintName":       "nonexistent",
+		"destructionStrategy": "hard_delete",
+	})
+
+	req, w := makeChiRequest(http.MethodPost, "/tiers", body, "/tiers", nil)
+	h.Create(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	env := parseEnvelope(t, w)
+	errObj := env["error"].(map[string]interface{})
+	assert.Equal(t, "NOT_FOUND", errObj["code"])
+}
+
 func TestTierCreate_ValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -95,14 +196,7 @@ func TestTierCreate_ValidationError(t *testing.T) {
 	h := newTierHandler(repo)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"name":           "",
-		"instances":      0,
-		"cpu":            "",
-		"memory":         "",
-		"storageSize":    "",
-		"pgVersion":      "",
-		"poolMode":       "",
-		"maxConnections": 0,
+		"name": "",
 	})
 
 	req, w := makeChiRequest(http.MethodPost, "/tiers", body, "/tiers", nil)
@@ -128,13 +222,7 @@ func TestTierCreate_DuplicateName(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":                "standard",
-		"instances":           1,
-		"cpu":                 "500m",
-		"memory":              "512Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      100,
+		"blueprintName":       "cnpg-standard",
 		"destructionStrategy": "hard_delete",
 	})
 
@@ -192,9 +280,8 @@ func TestTierList_PlatformUser_FullResponse(t *testing.T) {
 	assert.Len(t, data, 2)
 
 	first := data[0].(map[string]interface{})
-	assert.NotNil(t, first["cpu"], "platform user should see cpu")
-	assert.NotNil(t, first["memory"], "platform user should see memory")
-	assert.NotNil(t, first["instances"], "platform user should see instances")
+	assert.NotNil(t, first["destructionStrategy"], "platform user should see destructionStrategy")
+	assert.NotNil(t, first["blueprintName"], "platform user should see blueprintName")
 }
 
 func TestTierList_ProductUser_RedactedResponse(t *testing.T) {
@@ -226,9 +313,8 @@ func TestTierList_ProductUser_RedactedResponse(t *testing.T) {
 	assert.NotNil(t, first["id"], "product user should see id")
 	assert.NotNil(t, first["name"], "product user should see name")
 	assert.NotNil(t, first["description"], "product user should see description")
-	assert.Nil(t, first["cpu"], "product user should NOT see cpu")
-	assert.Nil(t, first["memory"], "product user should NOT see memory")
-	assert.Nil(t, first["instances"], "product user should NOT see instances")
+	assert.Nil(t, first["destructionStrategy"], "product user should NOT see destructionStrategy")
+	assert.Nil(t, first["blueprintId"], "product user should NOT see blueprintId")
 }
 
 func TestTierList_Empty(t *testing.T) {
@@ -340,8 +426,8 @@ func TestTierGetByID_ProductUser_Redacted(t *testing.T) {
 	assert.NotNil(t, data["id"])
 	assert.NotNil(t, data["name"])
 	assert.NotNil(t, data["description"])
-	assert.Nil(t, data["cpu"], "product user should NOT see cpu")
-	assert.Nil(t, data["memory"], "product user should NOT see memory")
+	assert.Nil(t, data["destructionStrategy"], "product user should NOT see destructionStrategy")
+	assert.Nil(t, data["blueprintId"], "product user should NOT see blueprintId")
 }
 
 // ===== PATCH /tiers/{id} =====
@@ -364,7 +450,6 @@ func TestTierUpdate_Success(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"description": "Updated description",
-		"instances":   3,
 	})
 
 	req, w := makeChiRequest(http.MethodPatch, "/tiers/"+id.String(), body, "/tiers/{id}", map[string]string{"id": id.String()})
