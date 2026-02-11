@@ -67,6 +67,11 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	}, nil
 }
 
+// DynamicClient returns the underlying dynamic Kubernetes client.
+func (c *Client) DynamicClient() dynamic.Interface {
+	return c.dynamic
+}
+
 // CheckConnectivity verifies that the Kubernetes API server is reachable
 // and returns the server version. The ctx parameter is accepted to satisfy the
 // HealthChecker interface and for future use when the discovery client supports
