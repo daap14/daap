@@ -35,7 +35,7 @@ type ProviderDatabase struct {
 
 // HealthResult represents the health status returned by a provider.
 type HealthResult struct {
-	Status     string  // "provisioning", "ready", "error"
+	Status     string // "provisioning", "ready", "error"
 	Host       *string
 	Port       *int
 	SecretName *string
