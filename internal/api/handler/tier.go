@@ -14,6 +14,7 @@ import (
 	"github.com/daap14/daap/internal/api/middleware"
 	"github.com/daap14/daap/internal/api/response"
 	"github.com/daap14/daap/internal/api/validation"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/tier"
 )
 
@@ -21,51 +22,31 @@ import (
 type createTierRequest struct {
 	Name                string `json:"name"`
 	Description         string `json:"description"`
-	Instances           int    `json:"instances"`
-	CPU                 string `json:"cpu"`
-	Memory              string `json:"memory"`
-	StorageSize         string `json:"storageSize"`
-	StorageClass        string `json:"storageClass"`
-	PGVersion           string `json:"pgVersion"`
-	PoolMode            string `json:"poolMode"`
-	MaxConnections      int    `json:"maxConnections"`
+	BlueprintName       string `json:"blueprintName"`
 	DestructionStrategy string `json:"destructionStrategy"`
 	BackupEnabled       bool   `json:"backupEnabled"`
 }
 
 // updateTierRequest is the request body for PATCH /tiers/{id}.
 type updateTierRequest struct {
-	Name                *string `json:"name"`
-	Description         *string `json:"description"`
-	Instances           *int    `json:"instances"`
-	CPU                 *string `json:"cpu"`
-	Memory              *string `json:"memory"`
-	StorageSize         *string `json:"storageSize"`
-	StorageClass        *string `json:"storageClass"`
-	PGVersion           *string `json:"pgVersion"`
-	PoolMode            *string `json:"poolMode"`
-	MaxConnections      *int    `json:"maxConnections"`
-	DestructionStrategy *string `json:"destructionStrategy"`
-	BackupEnabled       *bool   `json:"backupEnabled"`
+	Name                *string    `json:"name"`
+	Description         *string    `json:"description"`
+	BlueprintID         *uuid.UUID `json:"blueprintId"`
+	DestructionStrategy *string    `json:"destructionStrategy"`
+	BackupEnabled       *bool      `json:"backupEnabled"`
 }
 
 // tierResponse is the full API representation (platform users).
 type tierResponse struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	Description         string `json:"description"`
-	Instances           int    `json:"instances"`
-	CPU                 string `json:"cpu"`
-	Memory              string `json:"memory"`
-	StorageSize         string `json:"storageSize"`
-	StorageClass        string `json:"storageClass"`
-	PGVersion           string `json:"pgVersion"`
-	PoolMode            string `json:"poolMode"`
-	MaxConnections      int    `json:"maxConnections"`
-	DestructionStrategy string `json:"destructionStrategy"`
-	BackupEnabled       bool   `json:"backupEnabled"`
-	CreatedAt           string `json:"createdAt"`
-	UpdatedAt           string `json:"updatedAt"`
+	ID                  string  `json:"id"`
+	Name                string  `json:"name"`
+	Description         string  `json:"description"`
+	BlueprintID         *string `json:"blueprintId,omitempty"`
+	BlueprintName       string  `json:"blueprintName,omitempty"`
+	DestructionStrategy string  `json:"destructionStrategy"`
+	BackupEnabled       bool    `json:"backupEnabled"`
+	CreatedAt           string  `json:"createdAt"`
+	UpdatedAt           string  `json:"updatedAt"`
 }
 
 // tierSummaryResponse is the redacted API representation (product users).
@@ -76,23 +57,21 @@ type tierSummaryResponse struct {
 }
 
 func toTierResponse(t *tier.Tier) tierResponse {
-	return tierResponse{
+	resp := tierResponse{
 		ID:                  t.ID.String(),
 		Name:                t.Name,
 		Description:         t.Description,
-		Instances:           t.Instances,
-		CPU:                 t.CPU,
-		Memory:              t.Memory,
-		StorageSize:         t.StorageSize,
-		StorageClass:        t.StorageClass,
-		PGVersion:           t.PGVersion,
-		PoolMode:            t.PoolMode,
-		MaxConnections:      t.MaxConnections,
+		BlueprintName:       t.BlueprintName,
 		DestructionStrategy: t.DestructionStrategy,
 		BackupEnabled:       t.BackupEnabled,
 		CreatedAt:           t.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:           t.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
+	if t.BlueprintID != nil {
+		s := t.BlueprintID.String()
+		resp.BlueprintID = &s
+	}
+	return resp
 }
 
 func toTierSummaryResponse(t *tier.Tier) tierSummaryResponse {
@@ -105,12 +84,13 @@ func toTierSummaryResponse(t *tier.Tier) tierSummaryResponse {
 
 // TierHandler handles tier CRUD endpoints.
 type TierHandler struct {
-	repo tier.Repository
+	repo   tier.Repository
+	bpRepo blueprint.Repository
 }
 
 // NewTierHandler creates a new TierHandler.
-func NewTierHandler(repo tier.Repository) *TierHandler {
-	return &TierHandler{repo: repo}
+func NewTierHandler(repo tier.Repository, bpRepo blueprint.Repository) *TierHandler {
+	return &TierHandler{repo: repo, bpRepo: bpRepo}
 }
 
 // Create handles POST /tiers.
@@ -129,14 +109,7 @@ func (h *TierHandler) Create(w http.ResponseWriter, r *http.Request) {
 	fieldErrors := validation.ValidateCreateTierRequest(validation.CreateTierRequest{
 		Name:                req.Name,
 		Description:         req.Description,
-		Instances:           req.Instances,
-		CPU:                 req.CPU,
-		Memory:              req.Memory,
-		StorageSize:         req.StorageSize,
-		StorageClass:        req.StorageClass,
-		PGVersion:           req.PGVersion,
-		PoolMode:            req.PoolMode,
-		MaxConnections:      req.MaxConnections,
+		BlueprintName:       req.BlueprintName,
 		DestructionStrategy: req.DestructionStrategy,
 		BackupEnabled:       req.BackupEnabled,
 	})
@@ -145,17 +118,26 @@ func (h *TierHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve blueprint by name if provided
+	var blueprintID *uuid.UUID
+	if req.BlueprintName != "" {
+		bp, err := h.bpRepo.GetByName(r.Context(), req.BlueprintName)
+		if err != nil {
+			if errors.Is(err, blueprint.ErrBlueprintNotFound) {
+				response.Err(w, http.StatusNotFound, "NOT_FOUND", "Blueprint not found", requestID)
+				return
+			}
+			slog.Error("failed to look up blueprint", "error", err)
+			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create tier", requestID)
+			return
+		}
+		blueprintID = &bp.ID
+	}
+
 	t := &tier.Tier{
 		Name:                req.Name,
 		Description:         req.Description,
-		Instances:           req.Instances,
-		CPU:                 req.CPU,
-		Memory:              req.Memory,
-		StorageSize:         req.StorageSize,
-		StorageClass:        req.StorageClass,
-		PGVersion:           req.PGVersion,
-		PoolMode:            req.PoolMode,
-		MaxConnections:      req.MaxConnections,
+		BlueprintID:         blueprintID,
 		DestructionStrategy: req.DestructionStrategy,
 		BackupEnabled:       req.BackupEnabled,
 	}
@@ -257,14 +239,6 @@ func (h *TierHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	fieldErrors := validation.ValidateUpdateTierRequest(validation.UpdateTierRequest{
 		Description:         req.Description,
-		Instances:           req.Instances,
-		CPU:                 req.CPU,
-		Memory:              req.Memory,
-		StorageSize:         req.StorageSize,
-		StorageClass:        req.StorageClass,
-		PGVersion:           req.PGVersion,
-		PoolMode:            req.PoolMode,
-		MaxConnections:      req.MaxConnections,
 		DestructionStrategy: req.DestructionStrategy,
 		BackupEnabled:       req.BackupEnabled,
 	})
@@ -275,14 +249,7 @@ func (h *TierHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	fields := tier.UpdateFields{
 		Description:         req.Description,
-		Instances:           req.Instances,
-		CPU:                 req.CPU,
-		Memory:              req.Memory,
-		StorageSize:         req.StorageSize,
-		StorageClass:        req.StorageClass,
-		PGVersion:           req.PGVersion,
-		PoolMode:            req.PoolMode,
-		MaxConnections:      req.MaxConnections,
+		BlueprintID:         req.BlueprintID,
 		DestructionStrategy: req.DestructionStrategy,
 		BackupEnabled:       req.BackupEnabled,
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/api/middleware"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
@@ -16,17 +17,18 @@ import (
 
 // RouterDeps holds all dependencies needed by the router.
 type RouterDeps struct {
-	K8sChecker  k8s.HealthChecker
-	DBPinger    handler.DBPinger
-	Version     string
-	Repo        database.Repository
-	K8sManager  k8s.ResourceManager
-	Namespace   string
-	OpenAPISpec []byte
-	AuthService *auth.Service
-	TeamRepo    team.Repository
-	TierRepo    tier.Repository
-	UserRepo    auth.UserRepository
+	K8sChecker    k8s.HealthChecker
+	DBPinger      handler.DBPinger
+	Version       string
+	Repo          database.Repository
+	K8sManager    k8s.ResourceManager
+	Namespace     string
+	OpenAPISpec   []byte
+	AuthService   *auth.Service
+	TeamRepo      team.Repository
+	TierRepo      tier.Repository
+	BlueprintRepo blueprint.Repository
+	UserRepo      auth.UserRepository
 }
 
 // NewRouter creates and configures a Chi router with all middleware and routes.
@@ -84,7 +86,7 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 
 			// Tier routes
 			if deps.TierRepo != nil {
-				tierHandler := handler.NewTierHandler(deps.TierRepo)
+				tierHandler := handler.NewTierHandler(deps.TierRepo, deps.BlueprintRepo)
 
 				// Read-only tier routes (platform + product)
 				r.Group(func(r chi.Router) {

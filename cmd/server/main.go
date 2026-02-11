@@ -14,6 +14,7 @@ import (
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/config"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
@@ -68,10 +69,12 @@ func main() {
 	var authService *auth.Service
 	var teamRepo team.Repository
 	var tierRepo tier.Repository
+	var blueprintRepo blueprint.Repository
 	var userRepo auth.UserRepository
 	if db != nil {
 		teamRepo = team.NewRepository(db.Pool())
 		tierRepo = tier.NewPostgresRepository(db.Pool())
+		blueprintRepo = blueprint.NewPostgresRepository(db.Pool())
 		userRepo = auth.NewRepository(db.Pool())
 		authService = auth.NewService(userRepo, teamRepo, cfg.BcryptCost)
 
@@ -84,17 +87,18 @@ func main() {
 	}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:  checker,
-		DBPinger:    dbPinger,
-		Version:     cfg.Version,
-		Repo:        repo,
-		K8sManager:  k8sManager,
-		Namespace:   cfg.Namespace,
-		OpenAPISpec: specpkg.OpenAPISpec,
-		AuthService: authService,
-		TeamRepo:    teamRepo,
-		TierRepo:    tierRepo,
-		UserRepo:    userRepo,
+		K8sChecker:    checker,
+		DBPinger:      dbPinger,
+		Version:       cfg.Version,
+		Repo:          repo,
+		K8sManager:    k8sManager,
+		Namespace:     cfg.Namespace,
+		OpenAPISpec:   specpkg.OpenAPISpec,
+		AuthService:   authService,
+		TeamRepo:      teamRepo,
+		TierRepo:      tierRepo,
+		BlueprintRepo: blueprintRepo,
+		UserRepo:      userRepo,
 	})
 
 	// Start reconciler if both repo and k8s manager are available.

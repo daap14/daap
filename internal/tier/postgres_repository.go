@@ -51,10 +51,10 @@ func scanTier(row pgx.Row) (*Tier, error) {
 
 // Create inserts a new tier record.
 func (r *PostgresRepository) Create(ctx context.Context, t *Tier) error {
-	query := fmt.Sprintf(`
+	query := `
 		INSERT INTO tiers (name, description, blueprint_id, destruction_strategy, backup_enabled)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, created_at, updated_at`)
+		RETURNING id, created_at, updated_at`
 
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx, query,

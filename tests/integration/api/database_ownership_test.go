@@ -57,14 +57,6 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 	defaultTier := &tier.Tier{
 		Name:                "standard",
 		Description:         "Standard tier for tests",
-		Instances:           1,
-		CPU:                 "500m",
-		Memory:              "512Mi",
-		StorageSize:         "1Gi",
-		StorageClass:        "",
-		PGVersion:           "16",
-		PoolMode:            "transaction",
-		MaxConnections:      100,
 		DestructionStrategy: "hard_delete",
 		BackupEnabled:       false,
 	}
