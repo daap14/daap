@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.5.1] — 2026-02-10
+
+### Bug Fixes
+- **Tier deletion guard**: Soft-deleted databases no longer block tier deletion — changed `databases.tier_id` FK from `ON DELETE RESTRICT` to `ON DELETE SET NULL` and replaced FK-error-based guard with application-level check counting only active databases (migration 010)
+
+## [v0.5.0] — 2026-02-10
+
+### Features
+- **Tier CRUD**: POST/GET/PATCH/DELETE `/tiers` — platform-managed infrastructure profiles replacing hardcoded defaults
+- **Role-based response redaction**: Product users see only `{id, name, description}` for tiers; platform users see all infrastructure fields
+- **Database tier requirement**: `POST /databases` now requires a `tier` field (tier name) — tier params flow to CNPG Cluster and Pooler templates
+- **Tier deletion guard**: Tiers with active databases cannot be deleted (409 `TIER_HAS_DATABASES`)
+- **Forward-looking columns**: `destruction_strategy` and `backup_enabled` stored but not yet enforced
+
+### Architecture Decisions
+- ADR 007: Tier system design — platform-managed tier profiles superseding ADR 004 hardcoded defaults
+
+### Breaking Changes
+- `POST /databases` now requires a `"tier"` field (tier name string)
+- Hardcoded `defaultInstances`, `defaultStorageSize`, `defaultPGVersion` removed from template builders
+
+### Other Changes
+- New package: `internal/tier/` (model, repository, pgx implementation)
+- Template refactor: cluster and pooler builders accept tier params
+- Migrations 008 (tiers table), 009 (add tier_id FK to databases)
+- OpenAPI spec updated for all tier endpoints and database tier field
+- README updated with tier system documentation
+
 ## [v0.4.0] — 2026-02-10
 
 ### Features
@@ -95,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Makefile with standard targets
 - Kind cluster setup script
 
+[v0.5.1]: https://github.com/daap14/daap/compare/v0.5.0...v0.5.1
+[v0.5.0]: https://github.com/daap14/daap/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/daap14/daap/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/daap14/daap/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/daap14/daap/compare/v0.1.0...v0.2.0
