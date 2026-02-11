@@ -14,8 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	cnpgprovider "github.com/daap14/daap/internal/provider/cnpg"
 	"github.com/daap14/daap/internal/provider"
+	cnpgprovider "github.com/daap14/daap/internal/provider/cnpg"
 )
 
 // newFakeClient creates a fake dynamic client with CNPG types registered.

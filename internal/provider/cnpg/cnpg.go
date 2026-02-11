@@ -222,7 +222,7 @@ var kindToGVR = map[string]schema.GroupVersionResource{
 	"postgresql.cnpg.io/v1/Cluster":         {Group: "postgresql.cnpg.io", Version: "v1", Resource: "clusters"},
 	"postgresql.cnpg.io/v1/Pooler":          {Group: "postgresql.cnpg.io", Version: "v1", Resource: "poolers"},
 	"postgresql.cnpg.io/v1/ScheduledBackup": {Group: "postgresql.cnpg.io", Version: "v1", Resource: "scheduledbackups"},
-	"v1/ConfigMap":                           {Group: "", Version: "v1", Resource: "configmaps"},
-	"v1/Secret":                              {Group: "", Version: "v1", Resource: "secrets"},
-	"monitoring.coreos.com/v1/PodMonitor":    {Group: "monitoring.coreos.com", Version: "v1", Resource: "podmonitors"},
+	"v1/ConfigMap":                          {Group: "", Version: "v1", Resource: "configmaps"},
+	"v1/Secret":                             {Group: "", Version: "v1", Resource: "secrets"},
+	"monitoring.coreos.com/v1/PodMonitor":   {Group: "monitoring.coreos.com", Version: "v1", Resource: "podmonitors"},
 }
