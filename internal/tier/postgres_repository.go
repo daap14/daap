@@ -208,16 +208,21 @@ func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, fields Up
 }
 
 // Delete removes a tier by its UUID. Returns ErrTierHasDatabases if the tier
-// still has databases referencing it (FK RESTRICT).
+// still has active (non-soft-deleted) databases referencing it.
 func (r *PostgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM tiers WHERE id = $1`
-
-	result, err := r.pool.Exec(ctx, query, id)
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM databases WHERE tier_id = $1 AND deleted_at IS NULL`, id,
+	).Scan(&count)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-			return ErrTierHasDatabases
-		}
+		return fmt.Errorf("checking active databases for tier: %w", err)
+	}
+	if count > 0 {
+		return ErrTierHasDatabases
+	}
+
+	result, err := r.pool.Exec(ctx, `DELETE FROM tiers WHERE id = $1`, id)
+	if err != nil {
 		return fmt.Errorf("deleting tier: %w", err)
 	}
 

@@ -324,3 +324,36 @@ func TestDelete_TierHasDatabases(t *testing.T) {
 	err = repo.Delete(ctx, tr.ID)
 	assert.ErrorIs(t, err, tier.ErrTierHasDatabases)
 }
+
+func TestDelete_SoftDeletedDatabaseDoesNotBlock(t *testing.T) {
+	repo, pool, cleanup := setupTierRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	tr := newTestTier("soft-del")
+	err := repo.Create(ctx, tr)
+	require.NoError(t, err)
+
+	// Create a team for the database's owner_team_id FK
+	var teamID uuid.UUID
+	err = pool.QueryRow(ctx,
+		`INSERT INTO teams (name, role) VALUES ($1, $2) RETURNING id`,
+		"softdelteam", "platform",
+	).Scan(&teamID)
+	require.NoError(t, err)
+
+	// Insert a database referencing this tier, then soft-delete it
+	_, err = pool.Exec(ctx,
+		`INSERT INTO databases (name, owner_team_id, tier_id, purpose, namespace, cluster_name, pooler_name, status, deleted_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+		"softdb", teamID, tr.ID, "test", "default", "daap-softdb", "daap-softdb-pooler", "deleted",
+	)
+	require.NoError(t, err)
+
+	// Tier delete should succeed — only active databases block deletion
+	err = repo.Delete(ctx, tr.ID)
+	require.NoError(t, err)
+
+	_, err = repo.GetByID(ctx, tr.ID)
+	assert.ErrorIs(t, err, tier.ErrTierNotFound)
+}
