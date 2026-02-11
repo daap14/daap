@@ -12,12 +12,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
 	specpkg "github.com/daap14/daap/api"
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
@@ -54,22 +54,17 @@ func (n *noopRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ database.Statu
 }
 func (n *noopRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return nil }
 
-type noopManager struct{}
+type noopBlueprintRepo struct{}
 
-func (n *noopManager) ApplyCluster(_ context.Context, _ *unstructured.Unstructured) error {
-	return nil
-}
-func (n *noopManager) ApplyPooler(_ context.Context, _ *unstructured.Unstructured) error {
-	return nil
-}
-func (n *noopManager) DeleteCluster(_ context.Context, _, _ string) error { return nil }
-func (n *noopManager) DeletePooler(_ context.Context, _, _ string) error  { return nil }
-func (n *noopManager) GetClusterStatus(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-	return k8s.ClusterStatus{}, nil
-}
-func (n *noopManager) GetSecret(_ context.Context, _, _ string) (map[string][]byte, error) {
+func (n *noopBlueprintRepo) Create(_ context.Context, _ *blueprint.Blueprint) error { return nil }
+func (n *noopBlueprintRepo) GetByID(_ context.Context, _ uuid.UUID) (*blueprint.Blueprint, error) {
 	return nil, nil
 }
+func (n *noopBlueprintRepo) GetByName(_ context.Context, _ string) (*blueprint.Blueprint, error) {
+	return nil, nil
+}
+func (n *noopBlueprintRepo) List(_ context.Context) ([]blueprint.Blueprint, error) { return nil, nil }
+func (n *noopBlueprintRepo) Delete(_ context.Context, _ uuid.UUID) error           { return nil }
 
 type noopTeamRepo struct{}
 
@@ -123,14 +118,14 @@ func TestOpenAPISpec_RoutesCoverAllPaths(t *testing.T) {
 	authService := auth.NewService(userRepo, teamRepo, 4)
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:  &noopHealthChecker{},
-		OpenAPISpec: specpkg.OpenAPISpec,
-		Repo:        &noopRepo{},
-		K8sManager:  &noopManager{},
-		AuthService: authService,
-		TeamRepo:    teamRepo,
-		TierRepo:    &noopTierRepo{},
-		UserRepo:    userRepo,
+		K8sChecker:    &noopHealthChecker{},
+		OpenAPISpec:   specpkg.OpenAPISpec,
+		Repo:          &noopRepo{},
+		AuthService:   authService,
+		TeamRepo:      teamRepo,
+		TierRepo:      &noopTierRepo{},
+		BlueprintRepo: &noopBlueprintRepo{},
+		UserRepo:      userRepo,
 	})
 
 	chiRoutes := extractChiRoutes(t, router)

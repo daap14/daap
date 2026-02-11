@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,11 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/daap14/daap/internal/api/handler"
 	"github.com/daap14/daap/internal/database"
-	"github.com/daap14/daap/internal/k8s"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -81,59 +78,6 @@ func (m *mockRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 		return m.softDeleteFn(ctx, id)
 	}
 	return nil
-}
-
-// --- Mock ResourceManager ---
-
-type mockManager struct {
-	applyClusterFn     func(ctx context.Context, cluster *unstructured.Unstructured) error
-	applyPoolerFn      func(ctx context.Context, pooler *unstructured.Unstructured) error
-	deleteClusterFn    func(ctx context.Context, namespace, name string) error
-	deletePoolerFn     func(ctx context.Context, namespace, name string) error
-	getClusterStatusFn func(ctx context.Context, namespace, name string) (k8s.ClusterStatus, error)
-	getSecretFn        func(ctx context.Context, namespace, name string) (map[string][]byte, error)
-}
-
-func (m *mockManager) ApplyCluster(ctx context.Context, cluster *unstructured.Unstructured) error {
-	if m.applyClusterFn != nil {
-		return m.applyClusterFn(ctx, cluster)
-	}
-	return nil
-}
-
-func (m *mockManager) ApplyPooler(ctx context.Context, pooler *unstructured.Unstructured) error {
-	if m.applyPoolerFn != nil {
-		return m.applyPoolerFn(ctx, pooler)
-	}
-	return nil
-}
-
-func (m *mockManager) DeleteCluster(ctx context.Context, namespace, name string) error {
-	if m.deleteClusterFn != nil {
-		return m.deleteClusterFn(ctx, namespace, name)
-	}
-	return nil
-}
-
-func (m *mockManager) DeletePooler(ctx context.Context, namespace, name string) error {
-	if m.deletePoolerFn != nil {
-		return m.deletePoolerFn(ctx, namespace, name)
-	}
-	return nil
-}
-
-func (m *mockManager) GetClusterStatus(ctx context.Context, namespace, name string) (k8s.ClusterStatus, error) {
-	if m.getClusterStatusFn != nil {
-		return m.getClusterStatusFn(ctx, namespace, name)
-	}
-	return k8s.ClusterStatus{}, nil
-}
-
-func (m *mockManager) GetSecret(ctx context.Context, namespace, name string) (map[string][]byte, error) {
-	if m.getSecretFn != nil {
-		return m.getSecretFn(ctx, namespace, name)
-	}
-	return nil, nil
 }
 
 // --- Mock Team Repository ---
@@ -246,13 +190,13 @@ func (m *mockTierRepo) Delete(ctx context.Context, id uuid.UUID) error {
 
 // --- Helpers ---
 
-func newTestHandler(repo database.Repository, mgr k8s.ResourceManager, teamRepo team.Repository) *handler.DatabaseHandler {
+func newTestHandler(repo database.Repository, teamRepo team.Repository) *handler.DatabaseHandler {
 	tierRepo := &mockTierRepo{}
-	return handler.NewDatabaseHandler(repo, mgr, teamRepo, tierRepo, "default")
+	return handler.NewDatabaseHandler(repo, teamRepo, tierRepo, nil, nil, "default")
 }
 
-func newTestHandlerWithTierRepo(repo database.Repository, mgr k8s.ResourceManager, teamRepo team.Repository, tierRepo tier.Repository) *handler.DatabaseHandler {
-	return handler.NewDatabaseHandler(repo, mgr, teamRepo, tierRepo, "default")
+func newTestHandlerWithTierRepo(repo database.Repository, teamRepo team.Repository, tierRepo tier.Repository) *handler.DatabaseHandler {
+	return handler.NewDatabaseHandler(repo, teamRepo, tierRepo, nil, nil, "default")
 }
 
 func makeChiRequest(method, path string, body []byte, routePattern string, params map[string]string) (*http.Request, *httptest.ResponseRecorder) {
@@ -319,9 +263,8 @@ func sampleDB(id uuid.UUID, status string) *database.Database {
 func TestCreate_Success(t *testing.T) {
 	// Arrange
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -352,9 +295,8 @@ func TestCreate_Success(t *testing.T) {
 func TestCreate_ValidationError(t *testing.T) {
 	// Arrange
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "X", // too short and uppercase
@@ -383,9 +325,8 @@ func TestCreate_DuplicateName(t *testing.T) {
 			return database.ErrDuplicateName
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "existing-db",
@@ -409,13 +350,12 @@ func TestCreate_DuplicateName(t *testing.T) {
 func TestCreate_OwnerTeamNotFound(t *testing.T) {
 	// Arrange
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{
 		getByNameFn: func(_ context.Context, _ string) (*team.Team, error) {
 			return nil, team.ErrTeamNotFound
 		},
 	}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -436,18 +376,12 @@ func TestCreate_OwnerTeamNotFound(t *testing.T) {
 	assert.Equal(t, "NOT_FOUND", errObj["code"])
 }
 
-func TestCreate_SuccessWithoutK8s(t *testing.T) {
-	// K8s resource creation is temporarily disabled pending provider abstraction (v0.6 PR C).
-	// This test verifies that Create succeeds even when K8s manager would fail,
-	// since the handler currently only creates the DB record.
+func TestCreate_SuccessWithoutProvider(t *testing.T) {
+	// Provider registry is nil — Create succeeds by storing the DB record;
+	// infrastructure provisioning is deferred to the provider abstraction.
 	repo := &mockRepo{}
-	mgr := &mockManager{
-		applyClusterFn: func(_ context.Context, _ *unstructured.Unstructured) error {
-			return errors.New("k8s connection refused")
-		},
-	}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -460,7 +394,7 @@ func TestCreate_SuccessWithoutK8s(t *testing.T) {
 	// Act
 	h.Create(w, req)
 
-	// Assert: returns 201 — K8s creation is deferred to provider
+	// Assert: returns 201 — provider is nil so no infra provisioning attempted
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	env := parseEnvelope(t, w)
@@ -470,9 +404,8 @@ func TestCreate_SuccessWithoutK8s(t *testing.T) {
 func TestCreate_TierRequired(t *testing.T) {
 	// Arrange: tier field is missing from the request
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -506,14 +439,13 @@ func TestCreate_TierRequired(t *testing.T) {
 func TestCreate_TierNotFound(t *testing.T) {
 	// Arrange: tier name doesn't match any tier
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
 	tierRepo := &mockTierRepo{
 		getByNameFn: func(_ context.Context, _ string) (*tier.Tier, error) {
 			return nil, tier.ErrTierNotFound
 		},
 	}
-	h := newTestHandlerWithTierRepo(repo, mgr, teamRepo, tierRepo)
+	h := newTestHandlerWithTierRepo(repo, teamRepo, tierRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -547,7 +479,6 @@ func TestCreate_TierNameInResponse(t *testing.T) {
 			return nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
 	tierRepo := &mockTierRepo{
 		getByNameFn: func(_ context.Context, name string) (*tier.Tier, error) {
@@ -559,7 +490,7 @@ func TestCreate_TierNameInResponse(t *testing.T) {
 			}, nil
 		},
 	}
-	h := newTestHandlerWithTierRepo(repo, mgr, teamRepo, tierRepo)
+	h := newTestHandlerWithTierRepo(repo, teamRepo, tierRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":      "mydb",
@@ -599,9 +530,8 @@ func TestList_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases", nil, "/databases", nil)
 
@@ -639,13 +569,12 @@ func TestList_WithFilters(t *testing.T) {
 			}, nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{
 		getByNameFn: func(_ context.Context, name string) (*team.Team, error) {
 			return &team.Team{ID: filterTeamID, Name: name, Role: "platform"}, nil
 		},
 	}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases?owner_team=platform&status=ready&name=test", nil, "/databases", nil)
 
@@ -676,9 +605,8 @@ func TestList_DefaultPagination(t *testing.T) {
 			}, nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases", nil, "/databases", nil)
 
@@ -708,9 +636,8 @@ func TestList_ConnectionDetailsOnlyForReady(t *testing.T) {
 			}, nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases", nil, "/databases", nil)
 
@@ -753,9 +680,8 @@ func TestGetByID_Success(t *testing.T) {
 			return sampleDB(id, "provisioning"), nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases/"+id.String(), nil, "/databases/{id}", map[string]string{"id": id.String()})
 
@@ -779,9 +705,8 @@ func TestGetByID_NotFound(t *testing.T) {
 			return nil, database.ErrNotFound
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases/"+id.String(), nil, "/databases/{id}", map[string]string{"id": id.String()})
 
@@ -799,9 +724,8 @@ func TestGetByID_NotFound(t *testing.T) {
 func TestGetByID_InvalidUUID(t *testing.T) {
 	// Arrange
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases/not-a-uuid", nil, "/databases/{id}", map[string]string{"id": "not-a-uuid"})
 
@@ -824,9 +748,8 @@ func TestGetByID_ConnectionDetailsWhenReady(t *testing.T) {
 			return sampleDB(id, "ready"), nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodGet, "/databases/"+id.String(), nil, "/databases/{id}", map[string]string{"id": id.String()})
 
@@ -866,13 +789,12 @@ func TestUpdate_Success(t *testing.T) {
 			return db, nil
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{
 		getByNameFn: func(_ context.Context, name string) (*team.Team, error) {
 			return &team.Team{ID: newTeamID, Name: name, Role: "platform"}, nil
 		},
 	}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"ownerTeam": "new-team",
@@ -896,9 +818,8 @@ func TestUpdate_NameImmutable(t *testing.T) {
 	// Arrange
 	id := uuid.New()
 	repo := &mockRepo{}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"name": "new-name",
@@ -924,9 +845,8 @@ func TestUpdate_NotFound(t *testing.T) {
 			return nil, database.ErrNotFound
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"purpose": "updated",
@@ -949,8 +869,6 @@ func TestUpdate_NotFound(t *testing.T) {
 func TestDelete_Success(t *testing.T) {
 	// Arrange
 	id := uuid.New()
-	deleteClusterCalled := false
-	deletePoolerCalled := false
 	softDeleteCalled := false
 
 	repo := &mockRepo{
@@ -962,18 +880,8 @@ func TestDelete_Success(t *testing.T) {
 			return nil
 		},
 	}
-	mgr := &mockManager{
-		deleteClusterFn: func(_ context.Context, _, _ string) error {
-			deleteClusterCalled = true
-			return nil
-		},
-		deletePoolerFn: func(_ context.Context, _, _ string) error {
-			deletePoolerCalled = true
-			return nil
-		},
-	}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodDelete, "/databases/"+id.String(), nil, "/databases/{id}", map[string]string{"id": id.String()})
 
@@ -982,8 +890,6 @@ func TestDelete_Success(t *testing.T) {
 
 	// Assert
 	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.True(t, deleteClusterCalled, "expected DeleteCluster to be called")
-	assert.True(t, deletePoolerCalled, "expected DeletePooler to be called")
 	assert.True(t, softDeleteCalled, "expected SoftDelete to be called")
 }
 
@@ -995,9 +901,8 @@ func TestDelete_NotFound(t *testing.T) {
 			return nil, database.ErrNotFound
 		},
 	}
-	mgr := &mockManager{}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodDelete, "/databases/"+id.String(), nil, "/databases/{id}", map[string]string{"id": id.String()})
 
@@ -1012,8 +917,9 @@ func TestDelete_NotFound(t *testing.T) {
 	assert.Equal(t, "NOT_FOUND", errObj["code"])
 }
 
-func TestDelete_K8sCleanupIgnoresNotFound(t *testing.T) {
-	// Arrange: K8s delete returns errors, but soft-delete should still proceed
+func TestDelete_NilProviderStillSoftDeletes(t *testing.T) {
+	// Arrange: provider registry is nil — infrastructure cleanup is skipped,
+	// but soft-delete should still proceed.
 	id := uuid.New()
 	softDeleteCalled := false
 
@@ -1026,23 +932,15 @@ func TestDelete_K8sCleanupIgnoresNotFound(t *testing.T) {
 			return nil
 		},
 	}
-	mgr := &mockManager{
-		deleteClusterFn: func(_ context.Context, _, _ string) error {
-			return errors.New("cluster not found")
-		},
-		deletePoolerFn: func(_ context.Context, _, _ string) error {
-			return errors.New("pooler not found")
-		},
-	}
 	teamRepo := &mockDBTeamRepo{}
-	h := newTestHandler(repo, mgr, teamRepo)
+	h := newTestHandler(repo, teamRepo)
 
 	req, w := makeChiRequest(http.MethodDelete, "/databases/"+id.String(), nil, "/databases/{id}", map[string]string{"id": id.String()})
 
 	// Act
 	h.Delete(w, req)
 
-	// Assert: still returns 204 because K8s errors are logged but not fatal
+	// Assert: returns 204 — provider is nil so no infra cleanup attempted
 	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.True(t, softDeleteCalled, "expected SoftDelete to still be called despite K8s errors")
+	assert.True(t, softDeleteCalled, "expected SoftDelete to be called even without a provider")
 }

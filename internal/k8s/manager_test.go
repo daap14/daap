@@ -14,8 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	clientgotesting "k8s.io/client-go/testing"
-
-	"github.com/daap14/daap/internal/k8s/template"
 )
 
 // newTestManager creates a Manager backed by a fake dynamic client.
@@ -51,16 +49,46 @@ func newTestManager(objects ...runtime.Object) (*Manager, *dynamicfake.FakeDynam
 	return mgr, fakeClient
 }
 
-// testClusterParams returns ClusterParams with all required fields for tests.
-func testClusterParams(name, namespace string) template.ClusterParams {
-	return template.ClusterParams{
-		Name:        name,
-		Namespace:   namespace,
-		Instances:   1,
-		CPU:         "500m",
-		Memory:      "512Mi",
-		StorageSize: "1Gi",
-		PGVersion:   "16",
+func testCluster(name, namespace string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "postgresql.cnpg.io/v1",
+			"kind":       "Cluster",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"instances":             int64(1),
+				"imageName":             "ghcr.io/cloudnative-pg/postgresql:16",
+				"enableSuperuserAccess": false,
+			},
+		},
+	}
+}
+
+func testPooler(name, namespace, clusterRef string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "postgresql.cnpg.io/v1",
+			"kind":       "Pooler",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"cluster": map[string]interface{}{
+					"name": clusterRef,
+				},
+				"type": "rw",
+				"pgbouncer": map[string]interface{}{
+					"poolMode": "transaction",
+					"parameters": map[string]interface{}{
+						"max_client_conn": "100",
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -70,12 +98,11 @@ func TestApplyCluster_Create(t *testing.T) {
 	mgr, fakeClient := newTestManager()
 	ctx := context.Background()
 
-	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
+	cluster := testCluster("daap-testdb", "default")
 
 	err := mgr.ApplyCluster(ctx, cluster)
 	require.NoError(t, err)
 
-	// Verify the cluster was created
 	obj, err := fakeClient.Resource(clusterGVR).Namespace("default").Get(ctx, "daap-testdb", metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "daap-testdb", obj.GetName())
@@ -85,22 +112,19 @@ func TestApplyCluster_Create(t *testing.T) {
 func TestApplyCluster_UpdateExisting(t *testing.T) {
 	ctx := context.Background()
 
-	existing := template.BuildCluster(testClusterParams("testdb", "default"))
-
+	existing := testCluster("daap-testdb", "default")
 	mgr, fakeClient := newTestManager(existing)
 
-	updatedParams := testClusterParams("testdb", "default")
-	updatedParams.PGVersion = "15"
-	updated := template.BuildCluster(updatedParams)
+	updated := testCluster("daap-testdb", "default")
+	updated.Object["spec"].(map[string]interface{})["imageName"] = "ghcr.io/cloudnative-pg/postgresql:15"
 
 	err := mgr.ApplyCluster(ctx, updated)
 	require.NoError(t, err)
 
-	// Verify the cluster was updated
 	obj, err := fakeClient.Resource(clusterGVR).Namespace("default").Get(ctx, "daap-testdb", metav1.GetOptions{})
 	require.NoError(t, err)
 
-	spec, ok := obj.Object["spec"].(map[string]any)
+	spec, ok := obj.Object["spec"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, int64(1), spec["instances"])
 	assert.Equal(t, "ghcr.io/cloudnative-pg/postgresql:15", spec["imageName"])
@@ -114,7 +138,7 @@ func TestApplyCluster_Error(t *testing.T) {
 		return true, nil, assert.AnError
 	})
 
-	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
+	cluster := testCluster("daap-testdb", "default")
 
 	err := mgr.ApplyCluster(ctx, cluster)
 	assert.Error(t, err)
@@ -126,13 +150,7 @@ func TestApplyPooler_Create(t *testing.T) {
 	mgr, fakeClient := newTestManager()
 	ctx := context.Background()
 
-	pooler := template.BuildPooler(template.PoolerParams{
-		Name:           "testdb",
-		Namespace:      "default",
-		ClusterName:    "daap-testdb",
-		PoolMode:       "transaction",
-		MaxConnections: 100,
-	})
+	pooler := testPooler("daap-testdb-pooler", "default", "daap-testdb")
 
 	err := mgr.ApplyPooler(ctx, pooler)
 	require.NoError(t, err)
@@ -148,8 +166,7 @@ func TestApplyPooler_Create(t *testing.T) {
 func TestDeleteCluster_Success(t *testing.T) {
 	ctx := context.Background()
 
-	existing := template.BuildCluster(testClusterParams("testdb", "default"))
-
+	existing := testCluster("daap-testdb", "default")
 	mgr, _ := newTestManager(existing)
 
 	err := mgr.DeleteCluster(ctx, "default", "daap-testdb")
@@ -160,7 +177,6 @@ func TestDeleteCluster_NotFound(t *testing.T) {
 	mgr, _ := newTestManager()
 	ctx := context.Background()
 
-	// Deleting a non-existent cluster should not error
 	err := mgr.DeleteCluster(ctx, "default", "nonexistent")
 	assert.NoError(t, err)
 }
@@ -182,14 +198,7 @@ func TestDeleteCluster_Error(t *testing.T) {
 func TestDeletePooler_Success(t *testing.T) {
 	ctx := context.Background()
 
-	existing := template.BuildPooler(template.PoolerParams{
-		Name:           "testdb",
-		Namespace:      "default",
-		ClusterName:    "daap-testdb",
-		PoolMode:       "transaction",
-		MaxConnections: 100,
-	})
-
+	existing := testPooler("daap-testdb-pooler", "default", "daap-testdb")
 	mgr, _ := newTestManager(existing)
 
 	err := mgr.DeletePooler(ctx, "default", "daap-testdb-pooler")
@@ -221,8 +230,8 @@ func TestDeletePooler_Error(t *testing.T) {
 func TestGetClusterStatus_Ready(t *testing.T) {
 	ctx := context.Background()
 
-	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
-	cluster.Object["status"] = map[string]any{
+	cluster := testCluster("daap-testdb", "default")
+	cluster.Object["status"] = map[string]interface{}{
 		"phase": "Cluster in healthy state",
 	}
 
@@ -237,8 +246,8 @@ func TestGetClusterStatus_Ready(t *testing.T) {
 func TestGetClusterStatus_NotReady(t *testing.T) {
 	ctx := context.Background()
 
-	cluster := template.BuildCluster(testClusterParams("testdb", "default"))
-	cluster.Object["status"] = map[string]any{
+	cluster := testCluster("daap-testdb", "default")
+	cluster.Object["status"] = map[string]interface{}{
 		"phase": "Setting up primary",
 	}
 

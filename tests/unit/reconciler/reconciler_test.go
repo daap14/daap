@@ -9,14 +9,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
-	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/reconciler"
+	"github.com/daap14/daap/internal/tier"
 )
 
-// --- Mock Repository ---
+// --- Mock Database Repository ---
 
 type mockRepo struct {
 	mu             sync.Mutex
@@ -83,62 +84,73 @@ func (m *mockRepo) getStatusUpdates() []database.StatusUpdate {
 	return result
 }
 
-// --- Mock ResourceManager ---
+// --- Mock Tier Repository ---
 
-type mockManager struct {
-	applyClusterFn     func(ctx context.Context, cluster *unstructured.Unstructured) error
-	applyPoolerFn      func(ctx context.Context, pooler *unstructured.Unstructured) error
-	deleteClusterFn    func(ctx context.Context, namespace, name string) error
-	deletePoolerFn     func(ctx context.Context, namespace, name string) error
-	getClusterStatusFn func(ctx context.Context, namespace, name string) (k8s.ClusterStatus, error)
-	getSecretFn        func(ctx context.Context, namespace, name string) (map[string][]byte, error)
+type mockTierRepo struct {
+	getByIDFn func(ctx context.Context, id uuid.UUID) (*tier.Tier, error)
 }
 
-func (m *mockManager) ApplyCluster(ctx context.Context, cluster *unstructured.Unstructured) error {
-	if m.applyClusterFn != nil {
-		return m.applyClusterFn(ctx, cluster)
+func (m *mockTierRepo) Create(_ context.Context, _ *tier.Tier) error { return nil }
+func (m *mockTierRepo) GetByID(ctx context.Context, id uuid.UUID) (*tier.Tier, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
 	}
+	return nil, tier.ErrTierNotFound
+}
+func (m *mockTierRepo) GetByName(_ context.Context, _ string) (*tier.Tier, error) {
+	return nil, tier.ErrTierNotFound
+}
+func (m *mockTierRepo) List(_ context.Context) ([]tier.Tier, error) { return nil, nil }
+func (m *mockTierRepo) Update(_ context.Context, _ uuid.UUID, _ tier.UpdateFields) (*tier.Tier, error) {
+	return nil, tier.ErrTierNotFound
+}
+func (m *mockTierRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+
+// --- Mock Blueprint Repository ---
+
+type mockBPRepo struct {
+	getByIDFn func(ctx context.Context, id uuid.UUID) (*blueprint.Blueprint, error)
+}
+
+func (m *mockBPRepo) Create(_ context.Context, _ *blueprint.Blueprint) error { return nil }
+func (m *mockBPRepo) GetByID(ctx context.Context, id uuid.UUID) (*blueprint.Blueprint, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return nil, blueprint.ErrBlueprintNotFound
+}
+func (m *mockBPRepo) GetByName(_ context.Context, _ string) (*blueprint.Blueprint, error) {
+	return nil, blueprint.ErrBlueprintNotFound
+}
+func (m *mockBPRepo) List(_ context.Context) ([]blueprint.Blueprint, error) { return nil, nil }
+func (m *mockBPRepo) Delete(_ context.Context, _ uuid.UUID) error           { return nil }
+
+// --- Mock Provider ---
+
+type mockProvider struct {
+	checkHealthFn func(ctx context.Context, db provider.ProviderDatabase) (provider.HealthResult, error)
+}
+
+func (m *mockProvider) Apply(_ context.Context, _ provider.ProviderDatabase, _ string) error {
 	return nil
 }
-
-func (m *mockManager) ApplyPooler(ctx context.Context, pooler *unstructured.Unstructured) error {
-	if m.applyPoolerFn != nil {
-		return m.applyPoolerFn(ctx, pooler)
+func (m *mockProvider) Delete(_ context.Context, _ provider.ProviderDatabase) error { return nil }
+func (m *mockProvider) CheckHealth(ctx context.Context, db provider.ProviderDatabase) (provider.HealthResult, error) {
+	if m.checkHealthFn != nil {
+		return m.checkHealthFn(ctx, db)
 	}
-	return nil
-}
-
-func (m *mockManager) DeleteCluster(ctx context.Context, namespace, name string) error {
-	if m.deleteClusterFn != nil {
-		return m.deleteClusterFn(ctx, namespace, name)
-	}
-	return nil
-}
-
-func (m *mockManager) DeletePooler(ctx context.Context, namespace, name string) error {
-	if m.deletePoolerFn != nil {
-		return m.deletePoolerFn(ctx, namespace, name)
-	}
-	return nil
-}
-
-func (m *mockManager) GetClusterStatus(ctx context.Context, namespace, name string) (k8s.ClusterStatus, error) {
-	if m.getClusterStatusFn != nil {
-		return m.getClusterStatusFn(ctx, namespace, name)
-	}
-	return k8s.ClusterStatus{}, nil
-}
-
-func (m *mockManager) GetSecret(ctx context.Context, namespace, name string) (map[string][]byte, error) {
-	if m.getSecretFn != nil {
-		return m.getSecretFn(ctx, namespace, name)
-	}
-	return nil, nil
+	return provider.HealthResult{Status: "provisioning"}, nil
 }
 
 // --- Helpers ---
 
+var (
+	testTierID      = uuid.New()
+	testBlueprintID = uuid.New()
+)
+
 func provisioningDB(id uuid.UUID, name string) database.Database {
+	tierID := testTierID
 	return database.Database{
 		ID:            id,
 		Name:          name,
@@ -148,36 +160,76 @@ func provisioningDB(id uuid.UUID, name string) database.Database {
 		Namespace:     "default",
 		ClusterName:   "daap-" + name,
 		PoolerName:    "daap-" + name + "-pooler",
+		TierID:        &tierID,
 		Status:        "provisioning",
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
 }
 
+func defaultTierRepo() *mockTierRepo {
+	bpID := testBlueprintID
+	return &mockTierRepo{
+		getByIDFn: func(_ context.Context, _ uuid.UUID) (*tier.Tier, error) {
+			return &tier.Tier{
+				ID:          testTierID,
+				Name:        "standard",
+				BlueprintID: &bpID,
+			}, nil
+		},
+	}
+}
+
+func defaultBPRepo() *mockBPRepo {
+	return &mockBPRepo{
+		getByIDFn: func(_ context.Context, _ uuid.UUID) (*blueprint.Blueprint, error) {
+			return &blueprint.Blueprint{
+				ID:       testBlueprintID,
+				Name:     "cnpg-standard",
+				Provider: "cnpg",
+			}, nil
+		},
+	}
+}
+
+func registryWith(p provider.Provider) *provider.Registry {
+	reg := provider.NewRegistry()
+	reg.Register("cnpg", p)
+	return reg
+}
+
 func TestReconcile_ProvisioningToReady(t *testing.T) {
 	// Arrange
 	id := uuid.New()
+	host := "daap-testdb-pooler.default.svc.cluster.local"
+	port := 5432
+	secret := "daap-testdb-app"
+
 	repo := &mockRepo{
 		listFn: func(_ context.Context, filter database.ListFilter) (*database.ListResult, error) {
 			if filter.Status != nil && *filter.Status == "provisioning" {
 				db := provisioningDB(id, "testdb")
 				return &database.ListResult{
 					Databases: []database.Database{db},
-					Total:     1,
-					Page:      1,
-					Limit:     100,
+					Total:     1, Page: 1, Limit: 100,
 				}, nil
 			}
 			return &database.ListResult{Databases: []database.Database{}, Total: 0, Page: 1, Limit: 100}, nil
 		},
 	}
-	mgr := &mockManager{
-		getClusterStatusFn: func(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-			return k8s.ClusterStatus{Phase: "Cluster in healthy state", Ready: true}, nil
+
+	p := &mockProvider{
+		checkHealthFn: func(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+			return provider.HealthResult{
+				Status:     "ready",
+				Host:       &host,
+				Port:       &port,
+				SecretName: &secret,
+			}, nil
 		},
 	}
 
-	r := reconciler.New(repo, mgr, 50*time.Millisecond)
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 50*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -193,7 +245,7 @@ func TestReconcile_ProvisioningToReady(t *testing.T) {
 	lastUpdate := updates[len(updates)-1]
 	assert.Equal(t, "ready", lastUpdate.Status)
 	require.NotNil(t, lastUpdate.Host)
-	assert.Contains(t, *lastUpdate.Host, "daap-testdb-pooler.default.svc.cluster.local")
+	assert.Equal(t, host, *lastUpdate.Host)
 	require.NotNil(t, lastUpdate.Port)
 	assert.Equal(t, 5432, *lastUpdate.Port)
 	require.NotNil(t, lastUpdate.SecretName)
@@ -209,21 +261,20 @@ func TestReconcile_ProvisioningToError(t *testing.T) {
 				db := provisioningDB(id, "faildb")
 				return &database.ListResult{
 					Databases: []database.Database{db},
-					Total:     1,
-					Page:      1,
-					Limit:     100,
+					Total:     1, Page: 1, Limit: 100,
 				}, nil
 			}
 			return &database.ListResult{Databases: []database.Database{}, Total: 0, Page: 1, Limit: 100}, nil
 		},
 	}
-	mgr := &mockManager{
-		getClusterStatusFn: func(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-			return k8s.ClusterStatus{Phase: "Cluster in unhealthy state", Ready: false}, nil
+
+	p := &mockProvider{
+		checkHealthFn: func(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+			return provider.HealthResult{Status: "error"}, nil
 		},
 	}
 
-	r := reconciler.New(repo, mgr, 50*time.Millisecond)
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 50*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -241,8 +292,12 @@ func TestReconcile_ProvisioningToError(t *testing.T) {
 }
 
 func TestReconcile_ErrorToReady(t *testing.T) {
-	// Arrange: database in "error" status recovers when cluster becomes healthy
+	// Arrange: database in "error" status recovers when provider reports healthy
 	id := uuid.New()
+	host := "daap-recover-db-pooler.default.svc.cluster.local"
+	port := 5432
+	secret := "daap-recover-db-app"
+
 	repo := &mockRepo{
 		listFn: func(_ context.Context, filter database.ListFilter) (*database.ListResult, error) {
 			if filter.Status != nil && *filter.Status == "error" {
@@ -250,21 +305,25 @@ func TestReconcile_ErrorToReady(t *testing.T) {
 				db.Status = "error"
 				return &database.ListResult{
 					Databases: []database.Database{db},
-					Total:     1,
-					Page:      1,
-					Limit:     100,
+					Total:     1, Page: 1, Limit: 100,
 				}, nil
 			}
 			return &database.ListResult{Databases: []database.Database{}, Total: 0, Page: 1, Limit: 100}, nil
 		},
 	}
-	mgr := &mockManager{
-		getClusterStatusFn: func(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-			return k8s.ClusterStatus{Phase: "Cluster in healthy state", Ready: true}, nil
+
+	p := &mockProvider{
+		checkHealthFn: func(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+			return provider.HealthResult{
+				Status:     "ready",
+				Host:       &host,
+				Port:       &port,
+				SecretName: &secret,
+			}, nil
 		},
 	}
 
-	r := reconciler.New(repo, mgr, 50*time.Millisecond)
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 50*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -283,7 +342,7 @@ func TestReconcile_ErrorToReady(t *testing.T) {
 }
 
 func TestReconcile_ReadyToError(t *testing.T) {
-	// Arrange: database in "ready" status drifts to error when cluster becomes unhealthy
+	// Arrange: database in "ready" status drifts to error when provider reports unhealthy
 	id := uuid.New()
 	repo := &mockRepo{
 		listFn: func(_ context.Context, filter database.ListFilter) (*database.ListResult, error) {
@@ -292,21 +351,20 @@ func TestReconcile_ReadyToError(t *testing.T) {
 				db.Status = "ready"
 				return &database.ListResult{
 					Databases: []database.Database{db},
-					Total:     1,
-					Page:      1,
-					Limit:     100,
+					Total:     1, Page: 1, Limit: 100,
 				}, nil
 			}
 			return &database.ListResult{Databases: []database.Database{}, Total: 0, Page: 1, Limit: 100}, nil
 		},
 	}
-	mgr := &mockManager{
-		getClusterStatusFn: func(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-			return k8s.ClusterStatus{Phase: "Cluster in unhealthy state", Ready: false}, nil
+
+	p := &mockProvider{
+		checkHealthFn: func(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+			return provider.HealthResult{Status: "error"}, nil
 		},
 	}
 
-	r := reconciler.New(repo, mgr, 50*time.Millisecond)
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 50*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -322,22 +380,23 @@ func TestReconcile_ReadyToError(t *testing.T) {
 	assert.Equal(t, "error", lastUpdate.Status)
 }
 
-func TestReconcile_NoProvisioningDatabases(t *testing.T) {
+func TestReconcile_NoDatabases(t *testing.T) {
 	// Arrange: empty list returned
-	getClusterCalled := false
+	checkHealthCalled := false
 	repo := &mockRepo{
 		listFn: func(_ context.Context, _ database.ListFilter) (*database.ListResult, error) {
 			return &database.ListResult{Databases: []database.Database{}, Total: 0, Page: 1, Limit: 100}, nil
 		},
 	}
-	mgr := &mockManager{
-		getClusterStatusFn: func(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-			getClusterCalled = true
-			return k8s.ClusterStatus{}, nil
+
+	p := &mockProvider{
+		checkHealthFn: func(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+			checkHealthCalled = true
+			return provider.HealthResult{Status: "provisioning"}, nil
 		},
 	}
 
-	r := reconciler.New(repo, mgr, 50*time.Millisecond)
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 50*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -346,8 +405,8 @@ func TestReconcile_NoProvisioningDatabases(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 
-	// Assert: no K8s calls should have been made
-	assert.False(t, getClusterCalled, "expected no K8s cluster status check when no provisioning databases")
+	// Assert: no provider calls should have been made
+	assert.False(t, checkHealthCalled, "expected no provider health check when no databases")
 	updates := repo.getStatusUpdates()
 	assert.Empty(t, updates, "expected no status updates")
 }
@@ -355,9 +414,9 @@ func TestReconcile_NoProvisioningDatabases(t *testing.T) {
 func TestReconcile_GracefulShutdown(t *testing.T) {
 	// Arrange
 	repo := &mockRepo{}
-	mgr := &mockManager{}
+	p := &mockProvider{}
 
-	r := reconciler.New(repo, mgr, 1*time.Hour) // long interval so it won't tick
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 1*time.Hour) // long interval so it won't tick
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -379,4 +438,45 @@ func TestReconcile_GracefulShutdown(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("reconciler did not shut down within 2 seconds after context cancellation")
 	}
+}
+
+func TestReconcile_DatabaseWithoutTier_Skipped(t *testing.T) {
+	// Arrange: database has no tier ID — reconciler should skip it
+	id := uuid.New()
+	checkHealthCalled := false
+
+	repo := &mockRepo{
+		listFn: func(_ context.Context, filter database.ListFilter) (*database.ListResult, error) {
+			if filter.Status != nil && *filter.Status == "provisioning" {
+				db := provisioningDB(id, "no-tier-db")
+				db.TierID = nil // no tier
+				return &database.ListResult{
+					Databases: []database.Database{db},
+					Total:     1, Page: 1, Limit: 100,
+				}, nil
+			}
+			return &database.ListResult{Databases: []database.Database{}, Total: 0, Page: 1, Limit: 100}, nil
+		},
+	}
+
+	p := &mockProvider{
+		checkHealthFn: func(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+			checkHealthCalled = true
+			return provider.HealthResult{Status: "provisioning"}, nil
+		},
+	}
+
+	r := reconciler.New(repo, defaultTierRepo(), defaultBPRepo(), registryWith(p), 50*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Act
+	go r.Start(ctx)
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	// Assert
+	assert.False(t, checkHealthCalled, "expected no provider health check for tier-less database")
+	updates := repo.getStatusUpdates()
+	assert.Empty(t, updates, "expected no status updates for tier-less database")
 }

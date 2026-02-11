@@ -45,7 +45,6 @@ func setupTierTestServer(t *testing.T) *tierTestEnv {
 	require.NoError(t, err)
 
 	repo := database.NewRepository(testPool)
-	mgr := &dbMockManager{}
 	teamRepo := team.NewRepository(testPool)
 	tierRepo := tier.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
@@ -75,7 +74,6 @@ func setupTierTestServer(t *testing.T) *tierTestEnv {
 		DBPinger:    pinger,
 		Version:     "0.1.0-test",
 		Repo:        repo,
-		K8sManager:  mgr,
 		Namespace:   "default",
 		AuthService: authService,
 		TeamRepo:    teamRepo,

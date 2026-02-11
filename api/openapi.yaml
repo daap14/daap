@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: DAAP API
   description: Database as a Service platform API
-  version: 0.5.0
+  version: 0.6.0
   license:
     name: MIT
 
@@ -1236,13 +1236,221 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /blueprints:
+    post:
+      summary: Create a blueprint
+      description: >
+        Creates a new blueprint with provider and manifest template.
+        Platform role only.
+      operationId: createBlueprint
+      tags:
+        - blueprints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBlueprintRequest"
+            examples:
+              cnpg:
+                summary: Create a CNPG blueprint
+                value:
+                  name: cnpg-standard
+                  provider: cnpg
+                  manifests: |
+                    apiVersion: postgresql.cnpg.io/v1
+                    kind: Cluster
+                    metadata:
+                      name: "{{ .ClusterName }}"
+      responses:
+        "201":
+          description: Blueprint created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintResponse"
+        "400":
+          description: Validation error or invalid JSON
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions (platform role required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Blueprint name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: List blueprints
+      description: >
+        Returns all blueprints. Requires platform or product role.
+      operationId: listBlueprints
+      tags:
+        - blueprints
+      responses:
+        "200":
+          description: List of blueprints
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintListResponse"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /blueprints/{id}:
+    get:
+      summary: Get a blueprint
+      description: >
+        Returns a blueprint by ID. Requires platform or product role.
+      operationId: getBlueprint
+      tags:
+        - blueprints
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Blueprint UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Blueprint details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintResponse"
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Blueprint not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Delete a blueprint
+      description: >
+        Deletes a blueprint by ID. Fails if tiers reference it.
+        Platform role only.
+      operationId: deleteBlueprint
+      tags:
+        - blueprints
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Blueprint UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Blueprint deleted
+        "400":
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Insufficient permissions (platform role required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Blueprint not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Blueprint has active tiers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /tiers:
     post:
       summary: Create a tier
       description: >
-        Creates a new tier with infrastructure parameters (cluster sizing,
-        storage, PostgreSQL version, pooler config, destruction strategy).
-        Platform role only.
+        Creates a new tier linked to a blueprint. Infrastructure parameters
+        are defined by the blueprint. Platform role only.
       operationId: createTier
       tags:
         - tiers
@@ -1258,14 +1466,7 @@ paths:
                 value:
                   name: standard
                   description: Standard tier for production workloads
-                  instances: 2
-                  cpu: "500m"
-                  memory: "512Mi"
-                  storageSize: "10Gi"
-                  storageClass: ""
-                  pgVersion: "16"
-                  poolMode: transaction
-                  maxConnections: 100
+                  blueprintName: cnpg-standard
                   destructionStrategy: freeze
                   backupEnabled: true
       responses:
@@ -1283,14 +1484,8 @@ paths:
                       id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
                       name: standard
                       description: Standard tier for production workloads
-                      instances: 2
-                      cpu: "500m"
-                      memory: "512Mi"
-                      storageSize: "10Gi"
-                      storageClass: ""
-                      pgVersion: "16"
-                      poolMode: transaction
-                      maxConnections: 100
+                      blueprintId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                      blueprintName: cnpg-standard
                       destructionStrategy: freeze
                       backupEnabled: true
                       createdAt: "2026-02-10T14:00:00Z"
@@ -1318,8 +1513,8 @@ paths:
                       details:
                         - field: name
                           message: "name is required"
-                        - field: cpu
-                          message: "cpu is required"
+                        - field: blueprintName
+                          message: "blueprintName is required"
                     meta:
                       requestId: "880e8400-e29b-41d4-a716-446655440301"
                       timestamp: "2026-02-10T14:00:00Z"
@@ -1406,14 +1601,8 @@ paths:
                       - id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
                         name: standard
                         description: Standard tier for production workloads
-                        instances: 2
-                        cpu: "500m"
-                        memory: "512Mi"
-                        storageSize: "10Gi"
-                        storageClass: ""
-                        pgVersion: "16"
-                        poolMode: transaction
-                        maxConnections: 100
+                        blueprintId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        blueprintName: cnpg-standard
                         destructionStrategy: freeze
                         backupEnabled: true
                         createdAt: "2026-02-10T14:00:00Z"
@@ -1494,14 +1683,8 @@ paths:
                       id: "f1e2d3c4-b5a6-7890-fedc-ba0987654321"
                       name: standard
                       description: Standard tier for production workloads
-                      instances: 2
-                      cpu: "500m"
-                      memory: "512Mi"
-                      storageSize: "10Gi"
-                      storageClass: ""
-                      pgVersion: "16"
-                      poolMode: transaction
-                      maxConnections: 100
+                      blueprintId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                      blueprintName: cnpg-standard
                       destructionStrategy: freeze
                       backupEnabled: true
                       createdAt: "2026-02-10T14:00:00Z"
@@ -1819,6 +2002,7 @@ components:
             - FORBIDDEN
             - TEAM_HAS_USERS
             - TIER_HAS_DATABASES
+            - BLUEPRINT_HAS_TIERS
           example: INTERNAL_ERROR
         message:
           type: string
@@ -2421,24 +2605,126 @@ components:
         meta:
           $ref: "#/components/schemas/ListMeta"
 
+    # --- Blueprint Schemas ---
+    Blueprint:
+      type: object
+      description: Blueprint resource representation
+      required:
+        - id
+        - name
+        - provider
+        - manifests
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique blueprint identifier
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        name:
+          type: string
+          description: Blueprint name (unique, DNS-compatible)
+          maxLength: 63
+          pattern: "^[a-z][a-z0-9-]{1,61}[a-z0-9]$"
+          example: cnpg-standard
+        provider:
+          type: string
+          description: Provider name (must be registered)
+          example: cnpg
+        manifests:
+          type: string
+          description: Multi-document YAML with Go template placeholders
+          example: "apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: \"{{ .ClusterName }}\""
+        createdAt:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-02-10T14:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-02-10T14:00:00Z"
+
+    CreateBlueprintRequest:
+      type: object
+      description: Request body for creating a new blueprint
+      required:
+        - name
+        - provider
+        - manifests
+      properties:
+        name:
+          type: string
+          description: >
+            Blueprint name. Must be unique. Must be lowercase alphanumeric with
+            hyphens, 3-63 characters, starting with a letter.
+          maxLength: 63
+          pattern: "^[a-z][a-z0-9-]{1,61}[a-z0-9]$"
+          example: cnpg-standard
+        provider:
+          type: string
+          description: Provider name (must be registered in the provider registry)
+          example: cnpg
+        manifests:
+          type: string
+          description: >
+            Multi-document YAML with Go template placeholders. Each document must
+            have apiVersion, kind, and metadata.name. Templates use {{ .Name }},
+            {{ .ClusterName }}, {{ .Namespace }}, etc.
+          example: "apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: \"{{ .ClusterName }}\""
+
+    BlueprintResponse:
+      type: object
+      description: Single blueprint response envelope
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          $ref: "#/components/schemas/Blueprint"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    BlueprintListResponse:
+      type: object
+      description: Blueprint list response envelope with pagination metadata
+      required:
+        - data
+        - error
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Blueprint"
+        error:
+          type:
+            - object
+            - "null"
+          description: Always null on success
+          example: null
+        meta:
+          $ref: "#/components/schemas/ListMeta"
+
     # --- Tier Schemas ---
     Tier:
       type: object
       description: >
-        Full tier resource representation with all infrastructure parameters.
-        Returned to platform users.
+        Full tier resource representation. Returned to platform users.
+        Infrastructure parameters are now defined by the linked blueprint.
       required:
         - id
         - name
         - description
-        - instances
-        - cpu
-        - memory
-        - storageSize
-        - storageClass
-        - pgVersion
-        - poolMode
-        - maxConnections
         - destructionStrategy
         - backupEnabled
         - createdAt
@@ -2460,51 +2746,17 @@ components:
           description: Human-readable tier description
           maxLength: 1000
           example: Standard tier for production workloads
-        instances:
-          type: integer
-          description: Number of PostgreSQL instances in the CNPG cluster
-          minimum: 1
-          maximum: 10
-          example: 2
-        cpu:
+        blueprintId:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: UUID of the linked blueprint (null if unset)
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        blueprintName:
           type: string
-          description: CPU resource request/limit (K8s quantity format)
-          example: "500m"
-        memory:
-          type: string
-          description: Memory resource request/limit (K8s quantity format)
-          example: "512Mi"
-        storageSize:
-          type: string
-          description: Persistent volume storage size (K8s quantity format)
-          example: "10Gi"
-        storageClass:
-          type: string
-          description: Kubernetes StorageClass name (empty for cluster default)
-          maxLength: 255
-          example: ""
-        pgVersion:
-          type: string
-          description: PostgreSQL major version
-          enum:
-            - "15"
-            - "16"
-            - "17"
-          example: "16"
-        poolMode:
-          type: string
-          description: PgBouncer pool mode
-          enum:
-            - transaction
-            - session
-            - statement
-          example: transaction
-        maxConnections:
-          type: integer
-          description: Maximum PgBouncer client connections
-          minimum: 10
-          maximum: 10000
-          example: 100
+          description: Name of the linked blueprint (populated via JOIN)
+          example: cnpg-standard
         destructionStrategy:
           type: string
           description: Strategy applied when database is deleted
@@ -2557,13 +2809,7 @@ components:
       description: Request body for creating a new tier
       required:
         - name
-        - instances
-        - cpu
-        - memory
-        - storageSize
-        - pgVersion
-        - poolMode
-        - maxConnections
+        - blueprintName
         - destructionStrategy
       properties:
         name:
@@ -2580,52 +2826,10 @@ components:
           maxLength: 1000
           default: ""
           example: Standard tier for production workloads
-        instances:
-          type: integer
-          description: Number of PostgreSQL instances (1-10)
-          minimum: 1
-          maximum: 10
-          example: 2
-        cpu:
+        blueprintName:
           type: string
-          description: "CPU resource quantity (e.g., \"500m\", \"1\", \"2.5\")"
-          example: "500m"
-        memory:
-          type: string
-          description: "Memory resource quantity (e.g., \"512Mi\", \"1Gi\")"
-          example: "512Mi"
-        storageSize:
-          type: string
-          description: "Storage size (e.g., \"1Gi\", \"10Gi\")"
-          example: "10Gi"
-        storageClass:
-          type: string
-          description: Kubernetes StorageClass name (empty for cluster default)
-          maxLength: 255
-          default: ""
-          example: ""
-        pgVersion:
-          type: string
-          description: PostgreSQL major version
-          enum:
-            - "15"
-            - "16"
-            - "17"
-          example: "16"
-        poolMode:
-          type: string
-          description: PgBouncer pool mode
-          enum:
-            - transaction
-            - session
-            - statement
-          example: transaction
-        maxConnections:
-          type: integer
-          description: Maximum PgBouncer client connections (10-10000)
-          minimum: 10
-          maximum: 10000
-          example: 100
+          description: Name of the blueprint to link (must exist)
+          example: cnpg-standard
         destructionStrategy:
           type: string
           description: Strategy applied when database is deleted
@@ -2651,51 +2855,11 @@ components:
           description: Updated tier description
           maxLength: 1000
           example: Updated description
-        instances:
-          type: integer
-          description: Updated number of instances (1-10)
-          minimum: 1
-          maximum: 10
-          example: 3
-        cpu:
+        blueprintId:
           type: string
-          description: Updated CPU resource quantity
-          example: "1"
-        memory:
-          type: string
-          description: Updated memory resource quantity
-          example: "1Gi"
-        storageSize:
-          type: string
-          description: Updated storage size
-          example: "20Gi"
-        storageClass:
-          type: string
-          description: Updated storage class name
-          maxLength: 255
-          example: fast-ssd
-        pgVersion:
-          type: string
-          description: Updated PostgreSQL version
-          enum:
-            - "15"
-            - "16"
-            - "17"
-          example: "17"
-        poolMode:
-          type: string
-          description: Updated PgBouncer pool mode
-          enum:
-            - transaction
-            - session
-            - statement
-          example: session
-        maxConnections:
-          type: integer
-          description: Updated max connections (10-10000)
-          minimum: 10
-          maximum: 10000
-          example: 200
+          format: uuid
+          description: Updated blueprint UUID
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         destructionStrategy:
           type: string
           description: Updated destruction strategy
@@ -2830,6 +2994,8 @@ tags:
     description: Team management (superuser-only)
   - name: users
     description: User management (superuser-only)
+  - name: blueprints
+    description: Blueprint management (platform role for write, platform and product for read)
   - name: tiers
     description: Tier management (platform role for write, platform and product for read)
   - name: databases

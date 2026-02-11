@@ -18,6 +18,8 @@ import (
 	"github.com/daap14/daap/internal/config"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
+	cnpgprovider "github.com/daap14/daap/internal/provider/cnpg"
 	"github.com/daap14/daap/internal/reconciler"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
@@ -61,9 +63,12 @@ func main() {
 		repo = database.NewRepository(db.Pool())
 	}
 
-	var k8sManager k8s.ResourceManager
+	// Create provider registry and register CNPG provider
+	registry := provider.NewRegistry()
 	if k8sClient != nil {
-		k8sManager = k8sClient.NewManager()
+		cnpg := cnpgprovider.New(k8sClient.DynamicClient())
+		registry.Register("cnpg", cnpg)
+		slog.Info("registered provider", "name", "cnpg")
 	}
 
 	var authService *auth.Service
@@ -87,27 +92,27 @@ func main() {
 	}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:    checker,
-		DBPinger:      dbPinger,
-		Version:       cfg.Version,
-		Repo:          repo,
-		K8sManager:    k8sManager,
-		Namespace:     cfg.Namespace,
-		OpenAPISpec:   specpkg.OpenAPISpec,
-		AuthService:   authService,
-		TeamRepo:      teamRepo,
-		TierRepo:      tierRepo,
-		BlueprintRepo: blueprintRepo,
-		UserRepo:      userRepo,
+		K8sChecker:       checker,
+		DBPinger:         dbPinger,
+		Version:          cfg.Version,
+		Repo:             repo,
+		Namespace:        cfg.Namespace,
+		OpenAPISpec:      specpkg.OpenAPISpec,
+		AuthService:      authService,
+		TeamRepo:         teamRepo,
+		TierRepo:         tierRepo,
+		BlueprintRepo:    blueprintRepo,
+		ProviderRegistry: registry,
+		UserRepo:         userRepo,
 	})
 
 	// Start reconciler if both repo and k8s manager are available.
 	reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
 	defer reconcilerCancel()
 
-	if repo != nil && k8sManager != nil {
+	if repo != nil && tierRepo != nil && blueprintRepo != nil {
 		interval := time.Duration(cfg.ReconcilerInterval) * time.Second
-		rec := reconciler.New(repo, k8sManager, interval)
+		rec := reconciler.New(repo, tierRepo, blueprintRepo, registry, interval)
 		go rec.Start(reconcilerCtx)
 	}
 

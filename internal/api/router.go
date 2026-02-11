@@ -11,24 +11,25 @@ import (
 	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
 
 // RouterDeps holds all dependencies needed by the router.
 type RouterDeps struct {
-	K8sChecker    k8s.HealthChecker
-	DBPinger      handler.DBPinger
-	Version       string
-	Repo          database.Repository
-	K8sManager    k8s.ResourceManager
-	Namespace     string
-	OpenAPISpec   []byte
-	AuthService   *auth.Service
-	TeamRepo      team.Repository
-	TierRepo      tier.Repository
-	BlueprintRepo blueprint.Repository
-	UserRepo      auth.UserRepository
+	K8sChecker       k8s.HealthChecker
+	DBPinger         handler.DBPinger
+	Version          string
+	Repo             database.Repository
+	Namespace        string
+	OpenAPISpec      []byte
+	AuthService      *auth.Service
+	TeamRepo         team.Repository
+	TierRepo         tier.Repository
+	BlueprintRepo    blueprint.Repository
+	ProviderRegistry *provider.Registry
+	UserRepo         auth.UserRepository
 }
 
 // NewRouter creates and configures a Chi router with all middleware and routes.
@@ -72,8 +73,8 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 			}
 
 			// Business routes (platform + product)
-			if deps.Repo != nil && deps.K8sManager != nil {
-				dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.TeamRepo, deps.TierRepo, deps.Namespace)
+			if deps.Repo != nil {
+				dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.TeamRepo, deps.TierRepo, deps.BlueprintRepo, deps.ProviderRegistry, deps.Namespace)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireRole("platform", "product"))
 					r.Post("/databases", dbHandler.Create)
@@ -103,11 +104,30 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 					r.Delete("/tiers/{id}", tierHandler.Delete)
 				})
 			}
+
+			// Blueprint routes
+			if deps.BlueprintRepo != nil {
+				bpHandler := handler.NewBlueprintHandler(deps.BlueprintRepo, deps.ProviderRegistry)
+
+				// Read-only blueprint routes (platform + product)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireRole("platform", "product"))
+					r.Get("/blueprints", bpHandler.List)
+					r.Get("/blueprints/{id}", bpHandler.GetByID)
+				})
+
+				// Blueprint management routes (platform only)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireRole("platform"))
+					r.Post("/blueprints", bpHandler.Create)
+					r.Delete("/blueprints/{id}", bpHandler.Delete)
+				})
+			}
 		})
 	} else {
 		// Fallback: no auth service — register database routes without auth (graceful degradation)
-		if deps.Repo != nil && deps.K8sManager != nil {
-			dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.K8sManager, deps.TeamRepo, deps.TierRepo, deps.Namespace)
+		if deps.Repo != nil {
+			dbHandler := handler.NewDatabaseHandler(deps.Repo, deps.TeamRepo, deps.TierRepo, deps.BlueprintRepo, deps.ProviderRegistry, deps.Namespace)
 			r.Route("/databases", func(r chi.Router) {
 				r.Post("/", dbHandler.Create)
 				r.Get("/", dbHandler.List)
