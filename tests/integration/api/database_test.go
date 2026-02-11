@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/auth"
@@ -140,46 +139,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// --- Mock K8s ResourceManager for database tests ---
-
-type dbMockManager struct {
-	appliedClusters int
-	appliedPoolers  int
-	deletedClusters int
-	deletedPoolers  int
-}
-
-func (m *dbMockManager) ApplyCluster(_ context.Context, _ *unstructured.Unstructured) error {
-	m.appliedClusters++
-	return nil
-}
-
-func (m *dbMockManager) ApplyPooler(_ context.Context, _ *unstructured.Unstructured) error {
-	m.appliedPoolers++
-	return nil
-}
-
-func (m *dbMockManager) DeleteCluster(_ context.Context, _, _ string) error {
-	m.deletedClusters++
-	return nil
-}
-
-func (m *dbMockManager) DeletePooler(_ context.Context, _, _ string) error {
-	m.deletedPoolers++
-	return nil
-}
-
-func (m *dbMockManager) GetClusterStatus(_ context.Context, _, _ string) (k8s.ClusterStatus, error) {
-	return k8s.ClusterStatus{Phase: "Cluster in healthy state", Ready: true}, nil
-}
-
-func (m *dbMockManager) GetSecret(_ context.Context, _, _ string) (map[string][]byte, error) {
-	return map[string][]byte{
-		"username": []byte("app"),
-		"password": []byte("secret"),
-	}, nil
-}
-
 // --- Mock DBPinger that uses the real pool ---
 
 type dbTestPinger struct{ pool *pgxpool.Pool }
@@ -190,7 +149,6 @@ func (p *dbTestPinger) Ping(ctx context.Context) error { return p.pool.Ping(ctx)
 
 type dbTestEnv struct {
 	server *httptest.Server
-	mgr    *dbMockManager
 	apiKey string
 }
 
@@ -214,7 +172,6 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	require.NoError(t, err)
 
 	repo := database.NewRepository(testPool)
-	mgr := &dbMockManager{}
 	teamRepo := team.NewRepository(testPool)
 	tierRepo := tier.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
@@ -270,7 +227,6 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 		DBPinger:    pinger,
 		Version:     "0.1.0-test",
 		Repo:        repo,
-		K8sManager:  mgr,
 		Namespace:   "default",
 		AuthService: authService,
 		TeamRepo:    teamRepo,
@@ -281,7 +237,7 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	server := httptest.NewServer(router)
 	t.Cleanup(func() { server.Close() })
 
-	return &dbTestEnv{server: server, mgr: mgr, apiKey: rawKey}
+	return &dbTestEnv{server: server, apiKey: rawKey}
 }
 
 // --- HTTP helper ---
@@ -355,10 +311,6 @@ func TestDatabaseLifecycle(t *testing.T) {
 	assert.NotEmpty(t, data["createdAt"])
 	assert.NotEmpty(t, data["updatedAt"])
 
-	// Verify K8s resources were applied
-	assert.Equal(t, 1, env.mgr.appliedClusters)
-	assert.Equal(t, 1, env.mgr.appliedPoolers)
-
 	// Verify envelope structure
 	assert.Contains(t, result, "data")
 	assert.Contains(t, result, "error")
@@ -421,9 +373,6 @@ func TestDatabaseLifecycle(t *testing.T) {
 	// Step 5: DELETE /databases/:id -> 204
 	resp, _ = dbDoRequest(t, http.MethodDelete, env.server.URL+"/databases/"+dbID, nil, env.apiKey)
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
-
-	assert.Equal(t, 1, env.mgr.deletedClusters)
-	assert.Equal(t, 1, env.mgr.deletedPoolers)
 
 	// Step 6: GET /databases/:id -> 404 (soft-deleted)
 	resp, result = dbDoRequest(t, http.MethodGet, env.server.URL+"/databases/"+dbID, nil, env.apiKey)
@@ -524,9 +473,9 @@ func TestList_FilterByTeam(t *testing.T) {
 	env := setupDBTestServer(t)
 
 	// Create databases with different owner teams
-	for _, team := range []string{"alpha", "alpha", "beta"} {
+	for i, team := range []string{"alpha", "alpha", "beta"} {
 		body := map[string]interface{}{
-			"name":      fmt.Sprintf("filter-%s-%d", team, env.mgr.appliedClusters),
+			"name":      fmt.Sprintf("filter-%s-%d", team, i),
 			"ownerTeam": team,
 			"tier":      "standard",
 		}

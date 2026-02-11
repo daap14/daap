@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,8 +16,9 @@ import (
 	"github.com/daap14/daap/internal/api/middleware"
 	"github.com/daap14/daap/internal/api/response"
 	"github.com/daap14/daap/internal/api/validation"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
-	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -81,19 +83,21 @@ type updateDatabaseRequest struct {
 // DatabaseHandler handles database CRUD endpoints.
 type DatabaseHandler struct {
 	repo     database.Repository
-	manager  k8s.ResourceManager
 	teamRepo team.Repository
 	tierRepo tier.Repository
+	bpRepo   blueprint.Repository
+	registry *provider.Registry
 	ns       string
 }
 
 // NewDatabaseHandler creates a new DatabaseHandler.
-func NewDatabaseHandler(repo database.Repository, manager k8s.ResourceManager, teamRepo team.Repository, tierRepo tier.Repository, ns string) *DatabaseHandler {
+func NewDatabaseHandler(repo database.Repository, teamRepo team.Repository, tierRepo tier.Repository, bpRepo blueprint.Repository, registry *provider.Registry, ns string) *DatabaseHandler {
 	return &DatabaseHandler{
 		repo:     repo,
-		manager:  manager,
 		teamRepo: teamRepo,
 		tierRepo: tierRepo,
+		bpRepo:   bpRepo,
+		registry: registry,
 		ns:       ns,
 	}
 }
@@ -195,9 +199,33 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO(v0.6-PR-C): Replace with provider.Apply() once the provider abstraction is implemented.
-	// K8s resource creation is temporarily disabled until the blueprint/provider system is wired in.
-	slog.Info("database record created; K8s resource creation pending provider implementation", "database", db.Name)
+	// Provision infrastructure via provider abstraction
+	if resolvedTier.BlueprintID != nil && h.registry != nil {
+		bp, err := h.bpRepo.GetByID(r.Context(), *resolvedTier.BlueprintID)
+		if err != nil {
+			slog.Error("failed to look up tier blueprint", "error", err, "blueprintID", resolvedTier.BlueprintID)
+			h.markCreateError(r.Context(), db)
+			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create database", requestID)
+			return
+		}
+
+		p, ok := h.registry.Get(bp.Provider)
+		if !ok {
+			slog.Error("provider not registered", "provider", bp.Provider)
+			h.markCreateError(r.Context(), db)
+			response.Err(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create database", requestID)
+			return
+		}
+
+		pdb := toProviderDatabase(db, resolvedTier, bp)
+
+		if err := p.Apply(r.Context(), pdb, bp.Manifests); err != nil {
+			slog.Error("provider.Apply failed", "error", err, "database", db.Name, "provider", bp.Provider)
+			h.markCreateError(r.Context(), db)
+			response.Success(w, http.StatusCreated, toDatabaseResponse(db), requestID)
+			return
+		}
+	}
 
 	response.Success(w, http.StatusCreated, toDatabaseResponse(db), requestID)
 }
@@ -408,12 +436,21 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.manager.DeleteCluster(r.Context(), db.Namespace, db.ClusterName); err != nil {
-		slog.Error("failed to delete CNPG cluster", "error", err, "database", db.Name)
-	}
-
-	if err := h.manager.DeletePooler(r.Context(), db.Namespace, db.PoolerName); err != nil {
-		slog.Error("failed to delete CNPG pooler", "error", err, "database", db.Name)
+	// Delete infrastructure via provider abstraction
+	if db.TierID != nil && h.registry != nil {
+		resolvedTier, err := h.tierRepo.GetByID(r.Context(), *db.TierID)
+		if err == nil && resolvedTier.BlueprintID != nil {
+			bp, err := h.bpRepo.GetByID(r.Context(), *resolvedTier.BlueprintID)
+			if err == nil {
+				p, ok := h.registry.Get(bp.Provider)
+				if ok {
+					pdb := toProviderDatabase(db, resolvedTier, bp)
+					if err := p.Delete(r.Context(), pdb); err != nil {
+						slog.Error("provider.Delete failed", "error", err, "database", db.Name, "provider", bp.Provider)
+					}
+				}
+			}
+		}
 	}
 
 	if err := h.repo.SoftDelete(r.Context(), id); err != nil {
@@ -429,4 +466,28 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
-// TODO(v0.6-PR-C): Restore markCreateError when provider.Apply() is wired in.
+// markCreateError sets the database status to "error" when provisioning fails.
+func (h *DatabaseHandler) markCreateError(ctx context.Context, db *database.Database) {
+	su := database.StatusUpdate{Status: "error"}
+	if _, err := h.repo.UpdateStatus(ctx, db.ID, su); err != nil {
+		slog.Error("failed to mark database as error", "error", err, "database", db.Name)
+	}
+	db.Status = "error"
+}
+
+// toProviderDatabase builds a ProviderDatabase from domain models.
+func toProviderDatabase(db *database.Database, t *tier.Tier, bp *blueprint.Blueprint) provider.ProviderDatabase {
+	return provider.ProviderDatabase{
+		ID:          db.ID,
+		Name:        db.Name,
+		Namespace:   db.Namespace,
+		ClusterName: db.ClusterName,
+		PoolerName:  db.PoolerName,
+		OwnerTeam:   db.OwnerTeamName,
+		OwnerTeamID: db.OwnerTeamID,
+		Tier:        t.Name,
+		TierID:      t.ID,
+		Blueprint:   bp.Name,
+		Provider:    bp.Provider,
+	}
+}
