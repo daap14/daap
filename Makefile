@@ -17,6 +17,9 @@ AIR                  := $(shell go env GOPATH)/bin/air
 GOLANGCI_LINT        := $(shell go env GOPATH)/bin/golangci-lint
 VACUUM               := $(shell go env GOPATH)/bin/vacuum
 DATABASE_URL         ?= postgres://daap:daap@localhost:5432/daap?sslmode=disable
+TEST_DB_CONTAINER    := daap-test-db
+TEST_DB_PORT         := 5433
+TEST_DATABASE_URL    ?= postgres://daap:daap@127.0.0.1:$(TEST_DB_PORT)/daap_test?sslmode=disable
 MIGRATIONS_DIR       := migrations
 
 # ——————————————————————————————————————————————
@@ -73,9 +76,31 @@ run: build ## Build and run the binary
 test: ## Run all unit tests
 	$(GO) test $(GOFLAGS) ./... -count=1
 
+.PHONY: test-db-up
+test-db-up: ## Start test PostgreSQL container (port 5433)
+	@if docker ps --format '{{.Names}}' | grep -q '^$(TEST_DB_CONTAINER)$$'; then \
+		echo "Test database '$(TEST_DB_CONTAINER)' already running."; \
+	else \
+		docker rm -f $(TEST_DB_CONTAINER) 2>/dev/null || true; \
+		docker run -d --name $(TEST_DB_CONTAINER) \
+			-p $(TEST_DB_PORT):5432 \
+			-e POSTGRES_USER=daap \
+			-e POSTGRES_PASSWORD=daap \
+			-e POSTGRES_DB=daap_test \
+			postgres:16-alpine; \
+		echo "Waiting for test database..."; \
+		until docker exec $(TEST_DB_CONTAINER) pg_isready -U daap -d daap_test >/dev/null 2>&1; do sleep 0.5; done; \
+		echo "Test database '$(TEST_DB_CONTAINER)' ready on port $(TEST_DB_PORT)."; \
+	fi
+
+.PHONY: test-db-down
+test-db-down: ## Stop and remove test PostgreSQL container
+	@docker rm -f $(TEST_DB_CONTAINER) 2>/dev/null || true
+	@echo "Test database '$(TEST_DB_CONTAINER)' removed."
+
 .PHONY: test-integration
-test-integration: ## Run integration tests (requires K8s)
-	$(GO) test $(GOFLAGS) -tags=integration ./tests/integration/... -count=1
+test-integration: test-db-up ## Run integration tests (requires test DB)
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) test $(GOFLAGS) -tags=integration ./tests/integration/... -count=1
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with coverage report

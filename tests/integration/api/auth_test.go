@@ -11,8 +11,10 @@ import (
 
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -40,6 +42,8 @@ func setupAuthTestServer(t *testing.T) *authTestEnv {
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE blueprints CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -48,8 +52,12 @@ func setupAuthTestServer(t *testing.T) *authTestEnv {
 	repo := database.NewRepository(testPool)
 	teamRepo := team.NewRepository(testPool)
 	tierRepo := tier.NewPostgresRepository(testPool)
+	bpRepo := blueprint.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4)
+
+	registry := provider.NewRegistry()
+	registry.Register("cnpg", &mockProvider{})
 
 	// Bootstrap superuser
 	superKey, err := authService.BootstrapSuperuser(ctx)
@@ -62,15 +70,17 @@ func setupAuthTestServer(t *testing.T) *authTestEnv {
 	pinger := &dbTestPinger{pool: testPool}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:  checker,
-		DBPinger:    pinger,
-		Version:     "0.1.0-test",
-		Repo:        repo,
-		Namespace:   "default",
-		AuthService: authService,
-		TeamRepo:    teamRepo,
-		TierRepo:    tierRepo,
-		UserRepo:    userRepo,
+		K8sChecker:       checker,
+		DBPinger:         pinger,
+		Version:          "0.1.0-test",
+		Repo:             repo,
+		Namespace:        "default",
+		AuthService:      authService,
+		TeamRepo:         teamRepo,
+		TierRepo:         tierRepo,
+		BlueprintRepo:    bpRepo,
+		ProviderRegistry: registry,
+		UserRepo:         userRepo,
 	})
 
 	server := httptest.NewServer(router)

@@ -12,8 +12,10 @@ import (
 
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -41,6 +43,8 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE blueprints CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -49,13 +53,27 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 	repo := database.NewRepository(testPool)
 	teamRepo := team.NewRepository(testPool)
 	tierRepo := tier.NewPostgresRepository(testPool)
+	bpRepo := blueprint.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4)
+
+	registry := provider.NewRegistry()
+	registry.Register("cnpg", &mockProvider{})
+
+	// Create default blueprint
+	defaultBP := &blueprint.Blueprint{
+		Name:      "cnpg-default",
+		Provider:  "cnpg",
+		Manifests: testManifest,
+	}
+	err = bpRepo.Create(ctx, defaultBP)
+	require.NoError(t, err)
 
 	// Create a default tier for database tests
 	defaultTier := &tier.Tier{
 		Name:                "standard",
 		Description:         "Standard tier for tests",
+		BlueprintID:         &defaultBP.ID,
 		DestructionStrategy: "hard_delete",
 		BackupEnabled:       false,
 	}
@@ -92,15 +110,17 @@ func setupOwnershipTestServer(t *testing.T) *ownerTestEnv {
 	pinger := &dbTestPinger{pool: testPool}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:  checker,
-		DBPinger:    pinger,
-		Version:     "0.1.0-test",
-		Repo:        repo,
-		Namespace:   "default",
-		AuthService: authService,
-		TeamRepo:    teamRepo,
-		TierRepo:    tierRepo,
-		UserRepo:    userRepo,
+		K8sChecker:       checker,
+		DBPinger:         pinger,
+		Version:          "0.1.0-test",
+		Repo:             repo,
+		Namespace:        "default",
+		AuthService:      authService,
+		TeamRepo:         teamRepo,
+		TierRepo:         tierRepo,
+		BlueprintRepo:    bpRepo,
+		ProviderRegistry: registry,
+		UserRepo:         userRepo,
 	})
 
 	server := httptest.NewServer(router)

@@ -11,8 +11,10 @@ import (
 
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -39,6 +41,8 @@ func setupTierTestServer(t *testing.T) *tierTestEnv {
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE blueprints CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -47,8 +51,21 @@ func setupTierTestServer(t *testing.T) *tierTestEnv {
 	repo := database.NewRepository(testPool)
 	teamRepo := team.NewRepository(testPool)
 	tierRepo := tier.NewPostgresRepository(testPool)
+	bpRepo := blueprint.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4)
+
+	registry := provider.NewRegistry()
+	registry.Register("cnpg", &mockProvider{})
+
+	// Create default blueprint for tier tests
+	defaultBP := &blueprint.Blueprint{
+		Name:      "cnpg-default",
+		Provider:  "cnpg",
+		Manifests: testManifest,
+	}
+	err = bpRepo.Create(ctx, defaultBP)
+	require.NoError(t, err)
 
 	// Bootstrap superuser
 	superKey, err := authService.BootstrapSuperuser(ctx)
@@ -70,15 +87,17 @@ func setupTierTestServer(t *testing.T) *tierTestEnv {
 	pinger := &dbTestPinger{pool: testPool}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:  checker,
-		DBPinger:    pinger,
-		Version:     "0.1.0-test",
-		Repo:        repo,
-		Namespace:   "default",
-		AuthService: authService,
-		TeamRepo:    teamRepo,
-		TierRepo:    tierRepo,
-		UserRepo:    userRepo,
+		K8sChecker:       checker,
+		DBPinger:         pinger,
+		Version:          "0.1.0-test",
+		Repo:             repo,
+		Namespace:        "default",
+		AuthService:      authService,
+		TeamRepo:         teamRepo,
+		TierRepo:         tierRepo,
+		BlueprintRepo:    bpRepo,
+		ProviderRegistry: registry,
+		UserRepo:         userRepo,
 	})
 
 	server := httptest.NewServer(router)
@@ -103,14 +122,7 @@ func TestTierLifecycle(t *testing.T) {
 		body := map[string]interface{}{
 			"name":                "standard",
 			"description":         "Standard production tier",
-			"instances":           2,
-			"cpu":                 "500m",
-			"memory":              "512Mi",
-			"storageSize":         "10Gi",
-			"storageClass":        "",
-			"pgVersion":           "16",
-			"poolMode":            "transaction",
-			"maxConnections":      100,
+			"blueprintName":       "cnpg-default",
 			"destructionStrategy": "freeze",
 			"backupEnabled":       true,
 		}
@@ -123,13 +135,8 @@ func TestTierLifecycle(t *testing.T) {
 		assert.NotEmpty(t, tierID)
 		assert.Equal(t, "standard", data["name"])
 		assert.Equal(t, "Standard production tier", data["description"])
-		assert.Equal(t, float64(2), data["instances"])
-		assert.Equal(t, "500m", data["cpu"])
-		assert.Equal(t, "512Mi", data["memory"])
-		assert.Equal(t, "10Gi", data["storageSize"])
-		assert.Equal(t, "16", data["pgVersion"])
-		assert.Equal(t, "transaction", data["poolMode"])
-		assert.Equal(t, float64(100), data["maxConnections"])
+		assert.Equal(t, "cnpg-default", data["blueprintName"])
+		assert.NotNil(t, data["blueprintId"])
 		assert.Equal(t, "freeze", data["destructionStrategy"])
 		assert.Equal(t, true, data["backupEnabled"])
 		assert.NotEmpty(t, data["createdAt"])
@@ -150,13 +157,8 @@ func TestTierLifecycle(t *testing.T) {
 		assert.Equal(t, "Standard production tier", item["description"])
 
 		// Redacted fields should NOT be present
-		assert.Nil(t, item["instances"])
-		assert.Nil(t, item["cpu"])
-		assert.Nil(t, item["memory"])
-		assert.Nil(t, item["storageSize"])
-		assert.Nil(t, item["pgVersion"])
-		assert.Nil(t, item["poolMode"])
-		assert.Nil(t, item["maxConnections"])
+		assert.Nil(t, item["blueprintId"])
+		assert.Nil(t, item["blueprintName"])
 		assert.Nil(t, item["destructionStrategy"])
 		assert.Nil(t, item["backupEnabled"])
 		assert.Nil(t, item["createdAt"])
@@ -174,8 +176,8 @@ func TestTierLifecycle(t *testing.T) {
 		assert.Equal(t, "Standard production tier", data["description"])
 
 		// No infrastructure fields
-		assert.Nil(t, data["instances"])
-		assert.Nil(t, data["cpu"])
+		assert.Nil(t, data["blueprintId"])
+		assert.Nil(t, data["blueprintName"])
 	})
 
 	// Step 4: Platform user lists tiers -> full response
@@ -188,28 +190,29 @@ func TestTierLifecycle(t *testing.T) {
 
 		item := listData[0].(map[string]interface{})
 		assert.Equal(t, "standard", item["name"])
-		assert.Equal(t, float64(2), item["instances"])
-		assert.Equal(t, "500m", item["cpu"])
+		assert.NotNil(t, item["blueprintId"])
+		assert.Equal(t, "cnpg-default", item["blueprintName"])
+		assert.Equal(t, "freeze", item["destructionStrategy"])
+		assert.Equal(t, true, item["backupEnabled"])
 		assert.NotNil(t, item["createdAt"])
 	})
 
 	// Step 5: Platform user updates tier
 	t.Run("platform updates tier", func(t *testing.T) {
 		body := map[string]interface{}{
-			"instances":   3,
-			"description": "Updated standard tier",
+			"description":   "Updated standard tier",
+			"backupEnabled": false,
 		}
 		resp, result := dbDoRequest(t, http.MethodPatch, env.server.URL+"/tiers/"+tierID, body, env.platformKey)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		data := result["data"].(map[string]interface{})
-		assert.Equal(t, float64(3), data["instances"])
 		assert.Equal(t, "Updated standard tier", data["description"])
+		assert.Equal(t, false, data["backupEnabled"])
 		assert.Equal(t, "standard", data["name"]) // name unchanged
 	})
 
 	// Step 6: Create a database using this tier
-	var dbID string
 	t.Run("create database with tier", func(t *testing.T) {
 		body := map[string]interface{}{
 			"name":      "tier-test-db",
@@ -221,7 +224,6 @@ func TestTierLifecycle(t *testing.T) {
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		data := result["data"].(map[string]interface{})
-		dbID = data["id"].(string)
 		assert.Equal(t, "standard", data["tier"])
 		assert.Equal(t, "provisioning", data["status"])
 	})
@@ -234,21 +236,22 @@ func TestTierLifecycle(t *testing.T) {
 		assert.Equal(t, "TIER_HAS_DATABASES", errObj["code"])
 	})
 
-	// Step 8: Delete the database
-	t.Run("delete database", func(t *testing.T) {
-		resp, _ := dbDoRequest(t, http.MethodDelete, env.server.URL+"/databases/"+dbID, nil, env.platformKey)
-		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
-	})
+	// Step 8: Delete a tier that has no databases at all
+	t.Run("delete tier with no databases", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":                "empty-tier",
+			"blueprintName":       "cnpg-default",
+			"destructionStrategy": "hard_delete",
+		}
+		resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/tiers", body, env.platformKey)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		emptyTierID := result["data"].(map[string]interface{})["id"].(string)
 
-	// Step 9: Now delete the tier
-	t.Run("delete tier after database removed", func(t *testing.T) {
-		resp, _ := dbDoRequest(t, http.MethodDelete, env.server.URL+"/tiers/"+tierID, nil, env.platformKey)
+		resp, _ = dbDoRequest(t, http.MethodDelete, env.server.URL+"/tiers/"+emptyTierID, nil, env.platformKey)
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
-	})
 
-	// Step 10: Tier is gone
-	t.Run("tier not found after delete", func(t *testing.T) {
-		resp, result := dbDoRequest(t, http.MethodGet, env.server.URL+"/tiers/"+tierID, nil, env.platformKey)
+		// Confirm it's gone
+		resp, result = dbDoRequest(t, http.MethodGet, env.server.URL+"/tiers/"+emptyTierID, nil, env.platformKey)
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		errObj := result["error"].(map[string]interface{})
 		assert.Equal(t, "NOT_FOUND", errObj["code"])
@@ -262,13 +265,7 @@ func TestProductUser_CannotCreateTier(t *testing.T) {
 
 	body := map[string]interface{}{
 		"name":                "sneaky-tier",
-		"instances":           1,
-		"cpu":                 "250m",
-		"memory":              "256Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      50,
+		"blueprintName":       "cnpg-default",
 		"destructionStrategy": "hard_delete",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/tiers", body, env.productKey)
@@ -283,13 +280,7 @@ func TestProductUser_CannotUpdateTier(t *testing.T) {
 	// Platform creates a tier first
 	createBody := map[string]interface{}{
 		"name":                "prod-readonly",
-		"instances":           1,
-		"cpu":                 "250m",
-		"memory":              "256Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      50,
+		"blueprintName":       "cnpg-default",
 		"destructionStrategy": "hard_delete",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/tiers", createBody, env.platformKey)
@@ -298,7 +289,7 @@ func TestProductUser_CannotUpdateTier(t *testing.T) {
 
 	// Product user tries to update -> 403
 	updateBody := map[string]interface{}{
-		"instances": 5,
+		"description": "hacked",
 	}
 	resp, result = dbDoRequest(t, http.MethodPatch, env.server.URL+"/tiers/"+tierID, updateBody, env.productKey)
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
@@ -312,13 +303,7 @@ func TestProductUser_CannotDeleteTier(t *testing.T) {
 	// Platform creates a tier
 	createBody := map[string]interface{}{
 		"name":                "no-delete",
-		"instances":           1,
-		"cpu":                 "250m",
-		"memory":              "256Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      50,
+		"blueprintName":       "cnpg-default",
 		"destructionStrategy": "hard_delete",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/tiers", createBody, env.platformKey)
@@ -346,13 +331,7 @@ func TestSuperuser_CannotAccessTiers(t *testing.T) {
 	// Superuser tries to create tier -> 403
 	body := map[string]interface{}{
 		"name":                "super-tier",
-		"instances":           1,
-		"cpu":                 "250m",
-		"memory":              "256Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      50,
+		"blueprintName":       "cnpg-default",
 		"destructionStrategy": "hard_delete",
 	}
 	resp, result = dbDoRequest(t, http.MethodPost, env.server.URL+"/tiers", body, env.superKey)
@@ -368,13 +347,7 @@ func TestTierCreate_DuplicateNameIntegration(t *testing.T) {
 
 	body := map[string]interface{}{
 		"name":                "unique-tier",
-		"instances":           1,
-		"cpu":                 "250m",
-		"memory":              "256Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      50,
+		"blueprintName":       "cnpg-default",
 		"destructionStrategy": "hard_delete",
 	}
 
@@ -394,13 +367,7 @@ func TestTierUpdate_ImmutableName(t *testing.T) {
 
 	createBody := map[string]interface{}{
 		"name":                "immutable-name",
-		"instances":           1,
-		"cpu":                 "250m",
-		"memory":              "256Mi",
-		"storageSize":         "1Gi",
-		"pgVersion":           "16",
-		"poolMode":            "transaction",
-		"maxConnections":      50,
+		"blueprintName":       "cnpg-default",
 		"destructionStrategy": "hard_delete",
 	}
 	resp, result := dbDoRequest(t, http.MethodPost, env.server.URL+"/tiers", createBody, env.platformKey)

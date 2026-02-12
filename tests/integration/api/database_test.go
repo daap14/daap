@@ -18,8 +18,10 @@ import (
 
 	"github.com/daap14/daap/internal/api"
 	"github.com/daap14/daap/internal/auth"
+	"github.com/daap14/daap/internal/blueprint"
 	"github.com/daap14/daap/internal/database"
 	"github.com/daap14/daap/internal/k8s"
+	"github.com/daap14/daap/internal/provider"
 	"github.com/daap14/daap/internal/team"
 	"github.com/daap14/daap/internal/tier"
 )
@@ -28,22 +30,25 @@ const defaultDBTestURL = "postgres://daap:daap@127.0.0.1:5433/daap_test?sslmode=
 
 var testPool *pgxpool.Pool
 
+const createBlueprintsTableSQL = `
+CREATE TABLE IF NOT EXISTS blueprints (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(63) NOT NULL UNIQUE,
+    provider VARCHAR(63) NOT NULL,
+    manifests TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_blueprints_name ON blueprints (name);
+CREATE INDEX IF NOT EXISTS idx_blueprints_provider ON blueprints (provider);
+`
+
 const createTiersTableSQL = `
 CREATE TABLE IF NOT EXISTS tiers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(63) NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
-    instances INT NOT NULL DEFAULT 1
-        CHECK (instances >= 1 AND instances <= 10),
-    cpu VARCHAR(20) NOT NULL DEFAULT '500m',
-    memory VARCHAR(20) NOT NULL DEFAULT '512Mi',
-    storage_size VARCHAR(20) NOT NULL DEFAULT '1Gi',
-    storage_class VARCHAR(255) NOT NULL DEFAULT '',
-    pg_version VARCHAR(10) NOT NULL DEFAULT '16',
-    pool_mode VARCHAR(20) NOT NULL DEFAULT 'transaction'
-        CHECK (pool_mode IN ('transaction', 'session', 'statement')),
-    max_connections INT NOT NULL DEFAULT 100
-        CHECK (max_connections >= 10 AND max_connections <= 10000),
+    blueprint_id UUID REFERENCES blueprints(id) ON DELETE RESTRICT,
     destruction_strategy VARCHAR(20) NOT NULL DEFAULT 'hard_delete'
         CHECK (destruction_strategy IN ('freeze', 'archive', 'hard_delete')),
     backup_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -101,6 +106,32 @@ CREATE INDEX IF NOT EXISTS idx_users_api_key_prefix ON users (api_key_prefix) WH
 CREATE INDEX IF NOT EXISTS idx_users_team_id ON users (team_id);
 `
 
+// --- Mock provider for integration tests ---
+
+type mockProvider struct{}
+
+func (m *mockProvider) Apply(_ context.Context, _ provider.ProviderDatabase, _ string) error {
+	return nil
+}
+
+func (m *mockProvider) Delete(_ context.Context, _ provider.ProviderDatabase) error {
+	return nil
+}
+
+func (m *mockProvider) CheckHealth(_ context.Context, _ provider.ProviderDatabase) (provider.HealthResult, error) {
+	return provider.HealthResult{Status: "provisioning"}, nil
+}
+
+const testManifest = `---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: daap-{{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  instances: 1
+`
+
 func TestMain(m *testing.M) {
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
@@ -119,10 +150,14 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Run migrations (order matters due to FK constraints: auth -> tiers -> databases)
+	// Run migrations (order matters due to FK constraints: auth -> blueprints -> tiers -> databases)
 	if _, err := pool.Exec(ctx, createAuthTablesSQL); err != nil {
 		pool.Close()
 		log.Fatalf("Failed to run auth migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, createBlueprintsTableSQL); err != nil {
+		pool.Close()
+		log.Fatalf("Failed to run blueprints migration: %v", err)
 	}
 	if _, err := pool.Exec(ctx, createTiersTableSQL); err != nil {
 		pool.Close()
@@ -166,6 +201,8 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE tiers CASCADE")
 	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "TRUNCATE TABLE blueprints CASCADE")
+	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, "TRUNCATE TABLE teams CASCADE")
@@ -174,13 +211,27 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	repo := database.NewRepository(testPool)
 	teamRepo := team.NewRepository(testPool)
 	tierRepo := tier.NewPostgresRepository(testPool)
+	bpRepo := blueprint.NewPostgresRepository(testPool)
 	userRepo := auth.NewRepository(testPool)
 	authService := auth.NewService(userRepo, teamRepo, 4) // low cost for test speed
+
+	registry := provider.NewRegistry()
+	registry.Register("cnpg", &mockProvider{})
+
+	// Create a default blueprint for tests
+	defaultBP := &blueprint.Blueprint{
+		Name:      "cnpg-default",
+		Provider:  "cnpg",
+		Manifests: testManifest,
+	}
+	err = bpRepo.Create(ctx, defaultBP)
+	require.NoError(t, err)
 
 	// Create a default tier for database tests
 	defaultTier := &tier.Tier{
 		Name:                "standard",
 		Description:         "Standard tier for tests",
+		BlueprintID:         &defaultBP.ID,
 		DestructionStrategy: "hard_delete",
 		BackupEnabled:       false,
 	}
@@ -223,15 +274,17 @@ func setupDBTestServer(t *testing.T) *dbTestEnv {
 	pinger := &dbTestPinger{pool: testPool}
 
 	router := api.NewRouter(api.RouterDeps{
-		K8sChecker:  checker,
-		DBPinger:    pinger,
-		Version:     "0.1.0-test",
-		Repo:        repo,
-		Namespace:   "default",
-		AuthService: authService,
-		TeamRepo:    teamRepo,
-		TierRepo:    tierRepo,
-		UserRepo:    userRepo,
+		K8sChecker:       checker,
+		DBPinger:         pinger,
+		Version:          "0.1.0-test",
+		Repo:             repo,
+		Namespace:        "default",
+		AuthService:      authService,
+		TeamRepo:         teamRepo,
+		TierRepo:         tierRepo,
+		BlueprintRepo:    bpRepo,
+		ProviderRegistry: registry,
+		UserRepo:         userRepo,
 	})
 
 	server := httptest.NewServer(router)
